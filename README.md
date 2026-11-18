@@ -69,6 +69,38 @@ async with StreamingCommand() as recognizer:
 
 ## 配置
 
+一份 JSON 可以同时指定语音识别模型、命令模型及候选动作、目标、方向。两份完整配置随包安装。
+
+| 配置单 | 加载的模型与识别方式 |
+| --- | --- |
+| [本地最新测试版](src/streamingcommand/assets/presets/local-latest.json) | 从六个本地目录加载，ASR 使用 `v17-yue-precision`，命令解析使用 epoch 1 / step936，支持 H1、澄清和相邻片段比较。路径对应测试机，换机器时修改各项 `path`。 |
+| [Hugging Face 发布版](src/streamingcommand/assets/presets/huggingface-release.json) | 六个资源逐项固定仓库 URL 和提交 SHA。ASR 使用 `humoiww/PhonoCommand-ASR`，命令解析使用 `humoiww/PhonoCommand-LLM-0.8B` 发布的 step4400 权重，预测命令与 I/T/P。 |
+
+安装后可复制任一范例再编辑。下面的命令将发布版保存为当前目录下的 `settings.json`，使用本地版时把文件名改为 `local-latest.json`。
+
+```bash
+python -c "from importlib.resources import files; from pathlib import Path; Path('settings.json').write_bytes(files('streamingcommand').joinpath('assets/presets/huggingface-release.json').read_bytes())"
+```
+
+```python
+import asyncio
+from streamingcommand import StreamingCommand
+
+async def main():
+    recognizer = await StreamingCommand.initialize(config_path="settings.json")
+    try:
+        print(recognizer.info()["command"]["model_id"])
+        print((await recognizer.parse("Bend left."))["slots"])
+    finally:
+        await recognizer.close()
+
+asyncio.run(main())
+```
+
+编辑 `command.candidates` 中的 `I`、`T`、`P` 可以更换候选。`command.model` 选择命令模型，`models` 中的同名项指定权重来源。换远端版本就改 `url` 和 `revision`，使用本地目录就设 `"source": "local"` 并填 `path`。关闭旧实例后重新初始化即可生效。省略配置路径时使用 step3003，完整默认值见[默认配置单](src/streamingcommand/assets/settings.json)。完整调用签名和器械护士示例见[功能文档](doc/API.md)。
+
+也可以在 Python 中构建配置对象。
+
 ```python
 from streamingcommand import StreamingConfig, ASRConfig, CommandConfig, StreamingCommand
 
@@ -82,7 +114,7 @@ config = StreamingConfig(
 默认保留 `v15-canto-commit` 与 `clarification-new`；`clarification-latest` 为完整 epoch1/step936。
 两套已训练 r16 适配器及决策头随包提供，基座按固定 revision 下载；没有生成式提示词替代这些分类头。
 澄清提议、自然回答、保留 N、business none/null、tracking 和 scrub-nurse 空 P 使用现有契约。
-候选文件位于用户配置目录，可通过 `CandidateConfigs` 新建、保存、重命名与另存为；示例见 `examples/`。
+候选文件位于用户配置目录，可通过 `CandidateProfiles` 新建、保存、重命名与另存为；示例见 `examples/`。
 `original` 与 `semantic-pair` 控制定稿后的语义处理；后者比较 B 与未执行的 A+B，仅允许一致的可执行动作自动通过。
 全部模式共享一个 ASR 引擎，不额外解码音频。历史最多 H1。
 
@@ -97,7 +129,7 @@ config = StreamingConfig(
 
 模型缓存位于系统的 StreamingCommand 用户缓存目录。配置 `cache_dir`、`offline=True`，或提供
 `model_dir/alternate_model_dir/language_model_dir/speech_model_dir/base_model_dir` 本地目录。
-远端模型由 `assets/models.json` 固定 revision 和 SHA256；下载恢复和校验均在首次加载前完成。
+范例中的 Hugging Face 资源按完整提交 SHA 下载，并按随包清单核对运行所需文件的 SHA-256。自定义仓库或提交使用该版本的 Hugging Face 快照，需要提供与所选模型兼容的文件。
 原始录音、训练集、历史实验目录和旧 Demo 不包含在本仓库。
 
 ```bash

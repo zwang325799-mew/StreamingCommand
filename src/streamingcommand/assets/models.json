@@ -177,5 +177,27 @@
         "size": 2327524
       }
     }
+  },
+  "phonocommand-llm-0.8b": {
+    "repo_id": "humoiww/PhonoCommand-LLM-0.8B",
+    "revision": "f5824a4b36af0ff66dfa2d916fcf0b6166fe22fc",
+    "files": {
+      "adapter_config.json": {
+        "sha256": "8fd7bf25222c94036b4bb3217dd08ad46b30de58de14c7beb94603b802e90072",
+        "size": 1335
+      },
+      "adapter_model.safetensors": {
+        "sha256": "0173479a2d871b69621e3b57a8f1c09303a7af2fa385ee1821696e9efd4876f2",
+        "size": 22088304
+      },
+      "head.safetensors": {
+        "sha256": "9ee68d1001fedd8fd14da15f6085eca645917a9b19cca8cef390d61b41b0af46",
+        "size": 1640404
+      },
+      "experiment.json": {
+        "sha256": "7db3a5ec9d4e09f7d67081a3d4690013b7137896b01ee84bd58dae9e9a1d368b",
+        "size": 2894
+      }
+    }
   }
 }

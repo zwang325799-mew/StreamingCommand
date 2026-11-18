@@ -6,7 +6,8 @@ from pathlib import Path
 import shutil
 import tempfile
 from filelock import FileLock
-from ._runtime.paths import ASSETS, CACHE
+from .config import BUNDLED_CHECKPOINTS, CHECKPOINTS, PUBLISHED_MODEL
+from ._runtime.paths import ASSETS, CACHE, model_path
 
 
 def sha256(path):
@@ -22,20 +23,91 @@ class ModelStore:
         self.root = Path(cache_dir or CACHE) / "models"
         self.offline = offline
         self.manifest = json.loads((ASSETS / "models.json").read_text(encoding="utf-8"))
+        self._sources = {}
+
+    @classmethod
+    def from_config(cls, config):
+        """Use the same resource selection for startup, doctor and download."""
+        store = cls(config.cache_dir, offline=config.offline)
+        store._sources = {name: dict(entry) for name, entry in config.models.items()}
+        asr, cmd = config.asr, config.command
+        legacy_paths = {"asr": asr.model_dir, "asr-base": asr.alternate_model_dir,
+                        "language": asr.language_model_dir, "speech": asr.speech_model_dir,
+                        "llm-base": cmd.base_model_dir, cmd.model: cmd.checkpoint}
+        for name, path in legacy_paths.items():
+            if path:
+                if name in store._sources:
+                    raise ValueError(f"Choose either models.{name} or its legacy local path")
+                store._sources[name] = {"source": "local", "path": str(Path(path).absolute())}
+        # Older workers may select a bundled checkpoint through STREAMINGCOMMAND_MODELS.
+        for name in BUNDLED_CHECKPOINTS:
+            path = model_path(name)
+            if name not in store._sources and path != ASSETS / "models" / name:
+                store._sources[name] = {"source": "local", "path": str(path.absolute())}
+        return store
+
+    def _default_source(self, name):
+        if name in self.manifest:
+            spec = self.manifest[name]
+            entry = {"source": "huggingface", "url": "https://huggingface.co/" + spec["repo_id"],
+                     "revision": spec["revision"]}
+            if spec.get("prefix"):
+                entry["subfolder"] = spec["prefix"].rstrip("/")
+            return entry
+        if name in BUNDLED_CHECKPOINTS:
+            return {"source": "package", "path": f"assets/models/{name}"}
+        raise ValueError(f"Unknown model resource: {name}")
+
+    def source(self, name):
+        """Effective source without starting workers or downloading weights."""
+        return dict(self._sources.get(name) or self._default_source(name))
 
     def ensure(self, name, override=None):
-        if override:
-            path = Path(override).absolute()
+        entry = self.source(name) if not override else {"source": "local", "path": override}
+        path = self._resolve(name, entry)
+        if name in CHECKPOINTS:
+            files = ["experiment.json", "head.safetensors"]
+            adapter = path if name == PUBLISHED_MODEL else path / "adapter"
+            required = [adapter / "adapter_config.json", adapter / "adapter_model.safetensors"]
+            if name != PUBLISHED_MODEL:
+                files.append("clarify_head.pt")
+            required.extend(path / filename for filename in files)
+            for file in required:
+                if not file.is_file():
+                    raise FileNotFoundError(f"Incompatible checkpoint for {name}: missing {file}")
+            if "expected_step" in entry:
+                metadata = json.loads((path / "experiment.json").read_text(encoding="utf-8"))
+                step = metadata.get("global_step" if name == PUBLISHED_MODEL else "step")
+                if step != entry["expected_step"]:
+                    raise ValueError(f"{name}: expected step {entry['expected_step']}, found {step} in {path}")
+        return path
+
+    def _resolve(self, name, entry):
+        if entry["source"] == "local":
+            path = Path(entry["path"]).expanduser().absolute()
             if not path.is_dir():
-                raise FileNotFoundError(f"Model directory missing: {path}")
+                raise FileNotFoundError(f"Model directory missing for {name}: {path}")
             return path
-        packaged = ASSETS / "models" / name
-        if packaged.is_dir():
+        if entry["source"] == "package":
+            packaged = ASSETS / "models" / name
             integrity = json.loads((packaged / "integrity.json").read_text())
             for filename, expected in integrity["weights"].items():
                 if sha256(packaged / filename) != expected:
                     raise ValueError(f"Packaged checkpoint checksum mismatch: {name}/{filename}")
             return packaged
+        default = self._default_source(name)
+        if (entry["url"], entry["revision"], entry.get("subfolder", "")) != (
+                default.get("url"), default.get("revision"), default.get("subfolder", "")):
+            from huggingface_hub import snapshot_download
+            folder = entry.get("subfolder", "")
+            snapshot = snapshot_download(
+                repo_id=entry["url"].removeprefix("https://huggingface.co/"),
+                revision=entry["revision"], cache_dir=str(self.root.parent / "hub"),
+                allow_patterns=f"{folder}/*" if folder else None, local_files_only=self.offline)
+            path = Path(snapshot) / folder
+            if not path.is_dir():
+                raise FileNotFoundError(f"Missing {name} directory in pinned snapshot: {path}")
+            return path
         spec = self.manifest[name]
         path = self.root / name
         path.mkdir(parents=True, exist_ok=True)

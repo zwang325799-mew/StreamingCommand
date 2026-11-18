@@ -8,6 +8,7 @@ else:
     from device_policy import DEFAULT_GPU_UUID
 
 from .paths import model_path
+from ..config import PUBLISHED_MODEL
 ROOT = Path(__file__).resolve().parent.parent
 GPU_UUID = DEFAULT_GPU_UUID
 CURRENT_MODEL = "clarification-current"
@@ -80,9 +81,9 @@ def model_candidates(candidates, model):
 
 def model_history(history, model):
     result = dict(history)
-    if model in H1_MODELS:
+    if model in H1_MODELS or model == PUBLISHED_MODEL:
         result = {"H1": result["H1"]} if result.get("H1") else {}
-        if result:
+        if model in H1_MODELS and result:
             result["H1"] = re.sub(r"(^|;)I=rotate(?=;|$)", r"\1I=self rotate", result["H1"])
     return result
 

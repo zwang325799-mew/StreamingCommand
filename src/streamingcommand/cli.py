@@ -4,7 +4,7 @@ import asyncio
 import json
 import platform
 import sys
-from .config import StreamingConfig
+from .config import ASR_RESOURCES, StreamingConfig
 
 
 def main(argv=None):
@@ -13,12 +13,17 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="operation", required=True)
     commands.add_parser("doctor", help="Report dependencies without loading models")
     download = commands.add_parser("download", help="Download and verify pinned model resources")
-    download.add_argument("models", nargs="*", default=["asr", "asr-base", "language", "speech", "llm-base"])
+    download.add_argument("models", nargs="*")
     run = commands.add_parser("run", help="Recognize a file, or listen to the microphone")
     run.add_argument("audio", nargs="?")
     run.add_argument("--asr-only", action="store_true")
     args = parser.parse_args(argv)
     config = StreamingConfig.load(args.config) if args.config else StreamingConfig()
+    from .resources import ModelStore
+    store = ModelStore.from_config(config)
+    active = list(ASR_RESOURCES) if config.asr.backend != "fake" else []
+    if config.command.enabled:
+        active.extend(["llm-base", config.command.model])
     if args.operation == "doctor":
         import importlib.metadata as metadata
         versions = {}
@@ -28,11 +33,12 @@ def main(argv=None):
             except metadata.PackageNotFoundError:
                 versions[name] = None
         print(json.dumps({"python": sys.executable, "platform": platform.platform(), "versions": versions,
-                          "asr_backend": config.asr.backend, "asr_python": config.asr.python or sys.executable}, indent=2))
+                          "asr_backend": config.asr.backend, "asr_python": config.asr.python or sys.executable,
+                          "asr_profile": config.asr.profile,
+                          "command_model": config.command.model if config.command.enabled else None,
+                          "models": {name: store.source(name) for name in active}}, indent=2))
     elif args.operation == "download":
-        from .resources import ModelStore
-        store = ModelStore(config.cache_dir, offline=config.offline)
-        for name in args.models:
+        for name in args.models or active:
             print(name, store.ensure(name), flush=True)
     else:
         from .pipeline import StreamingCommand, StreamingASR

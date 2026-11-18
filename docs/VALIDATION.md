@@ -1,4 +1,13 @@
-# 验证范围（2026-11-17）
+# 验证范围
+
+## 2026-11-18 · 两份模型来源配置
+
+- 从 wheel 启动 `StreamingCommand`，在 Linux CPU 上分别载入本地 step936 和发布版 step4400。两份配置对同一个英语合成 WAV 都给出定稿 `bend down` 和可执行的 `bend / none / down`。两者直接解析天气闲聊时均返回 `NON_COMMAND`。
+- 本地范例额外使用器械护士候选解析 “Please give me the grasper.”，得到 `give / grasper / null`。发布版模型支持 I/T/P 候选排序，澄清与空 P 使用本地澄清模型。
+- 发布版范例的 ASR、命令适配器提交号已与 Hugging Face 在线发布清单核对。命令适配器和决策头从指定远端提交获取，ASR、基座和辅助资源复用本机文件并按清单逐项核验 SHA-256。两份范例都通过了使用已有资源的离线回放。[Hugging Face 发布清单](https://huggingface.co/humoiww/PhonoCommand-ASR/blob/main/release_set.json)
+- 包回归共 66 项通过。wheel 和源码包均包含两份 JSON、默认模板与 API 文档。这轮真模型测试覆盖 Linux CPU 的文本与单文件输入，Windows/macOS 真模型、物理麦克风及完整录音准确率未在此轮复测。
+
+## 2026-11-17 · 独立包与 Demo
 
 本次将识别能力抽成独立包，没有训练或修改任何原始权重、数据集、录音。
 

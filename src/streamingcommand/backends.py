@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 import sys
-from .config import StreamingConfig
+from .config import ASR_RESOURCES, StreamingConfig
 from .resources import ModelStore
 
 
@@ -11,16 +11,15 @@ async def build_backends(config: StreamingConfig):
     import asyncio
     from ._runtime import paths
     from ._runtime.device_policy import resolve_device
-    store = ModelStore(config.cache_dir, offline=config.offline)
+    store = ModelStore.from_config(config)
     spec = config.asr
     if spec.backend == "fake":
         from ._runtime.asr_backend import FakeASR
         asr = FakeASR()
     else:
         resources = {}
-        for name, override in [("asr", spec.model_dir), ("asr-base", spec.alternate_model_dir),
-                               ("language", spec.language_model_dir), ("speech", spec.speech_model_dir)]:
-            resources[name] = await asyncio.to_thread(store.ensure, name, override)
+        for name in ASR_RESOURCES:
+            resources[name] = await asyncio.to_thread(store.ensure, name)
         # These model locations are resolved once for the single resident runtime.
         paths._overrides.update({name: str(value) for name, value in resources.items()})
         from ._runtime import acoustic_speech
@@ -47,15 +46,21 @@ async def build_backends(config: StreamingConfig):
         asr.warmup = spec.warmup
         asr.gpu_uuid = spec.expected_gpu_uuid or ""
         asr.status.update(device=device, backend=spec.backend, model_dir=str(asr.model_dir), implementation="streamingcommand")
+        asr.status["model_sources"] = {name: {**store.source(name), "resolved_path": str(path)}
+                                       for name, path in resources.items()}
     if config.logs_dir:
         asr.logs_dir = Path(config.logs_dir)
     command = None
     if config.command.enabled:
         llm = config.command
-        base = await asyncio.to_thread(store.ensure, "llm-base", llm.base_model_dir)
+        base = await asyncio.to_thread(store.ensure, "llm-base")
+        checkpoint = await asyncio.to_thread(store.ensure, llm.model)
         from ._runtime.selectable_commands import SelectableCommandParser
         command = SelectableCommandParser(model=llm.model, device=llm.device,
             python=llm.python, base_model_dir=str(base), candidates_file=llm.candidates_file,
-            checkpoint_overrides={llm.model: llm.checkpoint} if llm.checkpoint else None,
+            candidates=llm.candidates,
+            checkpoint_overrides={llm.model: checkpoint},
+            checkpoint_sources={llm.model: store.source(llm.model)},
             use_cuda_graphs=llm.use_cuda_graphs, logs_root=config.logs_dir, expected_gpu_uuid=llm.expected_gpu_uuid)
+        command.status["base_model_source"] = {**store.source("llm-base"), "resolved_path": str(base)}
     return asr, command

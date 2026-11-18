@@ -1,7 +1,25 @@
 """Serializable configuration; independent of application paths and GPU UUIDs."""
 from dataclasses import dataclass, field, fields
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+import re
 import json
+import copy
+
+
+def _validate_candidates(value):
+    if not isinstance(value, dict) or set(value) != {"I", "T", "P"}:
+        raise ValueError("candidates must contain independent I/T/P lists")
+    for slot, values in value.items():
+        if (not isinstance(values, list) or (not values and slot != "P") or
+                any(not isinstance(v, str) or not v.strip() or v == "__unresolved__" for v in values) or
+                len(set(values)) != len(values)):
+            raise ValueError(f"Invalid {slot} candidate list")
+    if not value["P"]:
+        if not set(value["I"]) <= {"give", "stop", "reset"}:
+            raise ValueError("Empty P requires give/stop/reset candidates")
+    elif any("none" not in value[s] for s in ("T", "P")):
+        raise ValueError("T/P candidate lists must include business value none")
+    return copy.deepcopy(value)
 
 
 @dataclass
@@ -36,6 +54,56 @@ class CommandConfig:
     recognition_logic: str = "original"
     use_cuda_graphs: bool = True
     expected_gpu_uuid: str | None = None
+    candidates: dict[str, list[str]] | None = None
+
+    def __post_init__(self):
+        if self.candidates is not None and self.candidates_file is not None:
+            raise ValueError("Choose either command.candidates or command.candidates_file")
+        if self.candidates is not None:
+            self.candidates = _validate_candidates(self.candidates)
+
+
+PUBLISHED_MODEL = "phonocommand-llm-0.8b"
+ASR_RESOURCES = ("asr", "asr-base", "language", "speech")
+BUNDLED_CHECKPOINTS = ("clarification-new", "clarification-latest")
+CHECKPOINTS = (*BUNDLED_CHECKPOINTS, PUBLISHED_MODEL)
+
+
+def _validate_sources(models):
+    valid_names = {*ASR_RESOURCES, "llm-base", *CHECKPOINTS}
+    if not isinstance(models, dict) or set(models) - valid_names:
+        raise ValueError(f"models must map known resource names: {sorted(valid_names)}")
+    for name, entry in models.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"models.{name} must be a source object")
+        kind = entry.get("source")
+        if kind in ("local", "package"):
+            path = entry.get("path")
+            if not isinstance(path, str) or not path.strip():
+                raise ValueError(f"models.{name}: {kind} requires an explicit path")
+            if "expected_step" in entry:
+                step = entry["expected_step"]
+                if name not in CHECKPOINTS or type(step) is not int or step < 0:
+                    raise ValueError(f"models.{name}: expected_step requires a nonnegative checkpoint step")
+            if set(entry) - {"source", "path", "expected_step"}:
+                raise ValueError(f"models.{name}: unexpected {kind} source fields")
+            if kind == "package" and (name not in BUNDLED_CHECKPOINTS or path != f"assets/models/{name}"):
+                raise ValueError(f"models.{name}: no such bundled checkpoint")
+        elif kind == "huggingface":
+            url, revision = entry.get("url"), entry.get("revision")
+            if not isinstance(url, str) or not re.fullmatch(r"https://huggingface\.co/[\w-][\w.-]*/[\w-][\w.-]*", url):
+                raise ValueError(f"models.{name}: expected a Hugging Face model repository URL")
+            if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+                raise ValueError(f"models.{name}: revision must be a full commit SHA")
+            folder = entry.get("subfolder", "")
+            if not isinstance(folder, str) or (folder and (
+                    PureWindowsPath(folder).drive or any(p in ("", ".", "..") for p in folder.split("/"))
+                    or any(c in folder for c in "\\*?[]"))):
+                raise ValueError(f"models.{name}: invalid repository subfolder")
+            if set(entry) - {"source", "url", "revision", "subfolder"}:
+                raise ValueError(f"models.{name}: unexpected Hugging Face source fields")
+        else:
+            raise ValueError(f"models.{name}: choose local, huggingface or package")
 
 
 @dataclass
@@ -50,8 +118,14 @@ class StreamingConfig:
     cache_dir: str | None = None
     logs_dir: str | None = None
     offline: bool = False
+    models: dict[str, dict[str, str | int]] = field(default_factory=dict)
 
     def __post_init__(self):
+        _validate_sources(self.models)
+        if self.command.enabled and self.command.model not in CHECKPOINTS:
+            raise ValueError(f"Unknown command.model: {self.command.model}")
+        if self.command.enabled and self.command.model == PUBLISHED_MODEL and self.command.recognition_logic != "original":
+            raise ValueError("The published candidate ranker requires original recognition logic")
         if self.interval_ms < 20 or self.endpoint_ms < 20 or self.max_segment_ms < self.interval_ms:
             raise ValueError("Invalid streaming intervals")
         if self.event_queue_size < 1 or self.max_pending_audio_ms < self.max_segment_ms:
@@ -60,7 +134,9 @@ class StreamingConfig:
     @classmethod
     def load(cls, path):
         path = Path(path)
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(value, dict):
+            raise ValueError("Expected a JSON configuration object")
         allowed = {f.name for f in fields(cls)}
         if set(value) - allowed:
             raise ValueError(f"Unknown configuration keys: {sorted(set(value)-allowed)}")
@@ -76,4 +152,8 @@ class StreamingConfig:
         for name in ("cache_dir", "logs_dir"):
             if value.get(name) and not Path(value[name]).is_absolute():
                 value[name] = str((path.parent / value[name]).absolute())
-        return cls(**value)
+        config = cls(**value)
+        for entry in config.models.values():
+            if entry["source"] == "local":
+                entry["path"] = str((path.parent / Path(entry["path"]).expanduser()).absolute())
+        return config

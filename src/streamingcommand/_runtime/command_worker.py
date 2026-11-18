@@ -9,6 +9,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     __package__ = "streamingcommand._runtime"
 from . import device_policy
+from ..config import PUBLISHED_MODEL
 
 
 def main():
@@ -22,17 +23,23 @@ def main():
             with redirect_stdout(sys.stderr):
                 if operation == 'load':
                     import torch
-                    from .single_command_runtime import SingleCommandRuntime
                     torch.set_num_threads(4)
                     if expected and device_policy.DEVICE.startswith('cuda:'):
                         actual = str(torch.cuda.get_device_properties(0).uuid).lower().removeprefix('gpu-')
                         if actual != expected.lower().removeprefix('gpu-'):
                             raise RuntimeError('GPU UUID mismatch')
-                    runtime = SingleCommandRuntime(request['checkpoint'], model_id=request['model'],
-                        base_model_dir=request.get('base_model_dir'), use_cuda_graphs=request.get('use_cuda_graphs', True))
+                    if request["model"] == PUBLISHED_MODEL:
+                        from .published_command_runtime import PublishedCommandRuntime
+                        runtime = PublishedCommandRuntime(request["checkpoint"], request["base_model_dir"],
+                                                          device_policy.DEVICE, request.get("use_cuda_graphs", True))
+                    else:
+                        from .single_command_runtime import SingleCommandRuntime
+                        runtime = SingleCommandRuntime(request['checkpoint'], model_id=request['model'],
+                            base_model_dir=request.get('base_model_dir'), use_cuda_graphs=request.get('use_cuda_graphs', True))
                     runtime.warmup(request['candidates'])
                     result = {**runtime.identity, 'model_id': request['model'], 'device': device_policy.DEVICE,
-                              'device_uuid': expected, 'backbones': 1, 'adapters': 1, 'adapter_merged': False}
+                               'device_uuid': expected, 'backbones': 1, 'adapters': 1,
+                               'adapter_merged': request["model"] == PUBLISHED_MODEL}
                 elif operation == 'close':
                     result = {}
                 elif runtime is None:
@@ -40,11 +47,15 @@ def main():
                 elif operation == 'parse':
                     result = runtime.parse_turn(**request)
                 elif operation == 'parse_pair':
+                    if not hasattr(runtime, 'parse_pair'):
+                        raise ValueError('Semantic-pair recognition requires a clarification model')
                     result = runtime.parse_pair(**request)
                 elif operation == 'feedback':
+                    if not hasattr(runtime, 'feedback'):
+                        raise ValueError('Feedback requires a clarification model')
                     result = runtime.feedback(**request)
                 elif operation in ('clear', 'end'):
-                    if runtime.session_id == request.get('session_id'):
+                    if hasattr(runtime, "session_id") and runtime.session_id == request.get('session_id'):
                         runtime.clear()
                         if operation == 'end':
                             runtime.session_id = None

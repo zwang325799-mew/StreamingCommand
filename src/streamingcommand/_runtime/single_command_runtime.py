@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import sys
 import time
 import uuid
@@ -32,6 +32,8 @@ class SingleCommandRuntime:
         if integrity_path.exists():
             review = json.loads(integrity_path.read_text(encoding="utf-8"))
             for filename, expected in review["weights"].items():
+                if PureWindowsPath(filename).anchor or '\\' in filename or '..' in filename.split('/'):
+                    raise ValueError(f"Invalid checkpoint manifest path: {filename}")
                 if hashlib.sha256((self.checkpoint / filename).read_bytes()).hexdigest() != expected:
                     raise ValueError(f"Checkpoint hash mismatch: {filename}")
             self.identity.update(checkpoint_hashes_verified=True, max_history_depth=1, adapter_merged=False)

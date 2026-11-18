@@ -12,25 +12,34 @@ import time
 from .command_backend import DEFAULT_CANDIDATES, validate_candidates, validate_history
 from .candidate_configs import CandidateConfigs
 from .command_models import DEFAULT_MODEL, model_specs, model_candidates, model_history
+from ..config import PUBLISHED_MODEL
 from .device_policy import DEFAULT_DEVICE, resolve_device
 
 ROOT = Path(__file__).resolve().parent
 
 
 class SelectableCommandParser:
-    def __init__(self, model=DEFAULT_MODEL, *, checkpoint=None, candidates_file=None,
-                 device=DEFAULT_DEVICE, logs_root=None, python=None, checkpoint_overrides=None, base_model_dir=None, use_cuda_graphs=True, expected_gpu_uuid=None):
+    def __init__(self, model=DEFAULT_MODEL, *, checkpoint=None, candidates_file=None, candidates=None,
+                 device=DEFAULT_DEVICE, logs_root=None, python=None, checkpoint_overrides=None, base_model_dir=None, use_cuda_graphs=True, expected_gpu_uuid=None,
+                 checkpoint_sources=None):
         self.device, self.gpu_uuid = resolve_device(device)
         self.gpu_uuid = expected_gpu_uuid or self.gpu_uuid
         self.python = str(python or sys.executable)
         self.base_model_dir = base_model_dir
         self.use_cuda_graphs = use_cuda_graphs
         self.specs = model_specs(checkpoint)
+        if PUBLISHED_MODEL in (checkpoint_overrides or {}):
+            self.specs[PUBLISHED_MODEL] = dict(
+                id=PUBLISHED_MODEL, label="PhonoCommand-LLM-0.8B · candidate ranker",
+                clarification=False, session_memory=False, max_history_depth=1)
         for key, value in (checkpoint_overrides or {}).items():
             self.specs[key]["checkpoint"] = str(Path(value).resolve())
+        for key, source in (checkpoint_sources or {}).items():
+            self.specs[key]["checkpoint_source"] = source
         if model not in self.specs:
             raise ValueError("Unknown command model")
         self._candidates_file = Path(candidates_file) if candidates_file else None
+        self._inline_candidates = validate_candidates(candidates) if candidates is not None else None
         self.logs_root = Path(logs_root or __import__("streamingcommand._runtime.paths",fromlist=["LOGS"]).LOGS)
         self.status = {"backend": "qwen-prefill", "state": "idle", "ready": False,
                        "is_fake": False, "device": self.device,
@@ -50,14 +59,19 @@ class SelectableCommandParser:
                     "checkpoint_hashes_verified"):
             self.status.pop(key, None)
         self.checkpoint = Path(spec["checkpoint"])
-        candidate_file = self._candidates_file or CandidateConfigs().default_path(model, DEFAULT_CANDIDATES)
-        self._candidate_config_path = candidate_file.resolve()
-        self.default_candidates = model_candidates(validate_candidates(json.loads(candidate_file.read_text())), model)
+        candidates = self._inline_candidates
+        self._candidate_config_path = None
+        if candidates is None:
+            candidate_file = self._candidates_file or CandidateConfigs().default_path(model, DEFAULT_CANDIDATES)
+            self._candidate_config_path = candidate_file.resolve()
+            candidates = validate_candidates(json.loads(candidate_file.read_text(encoding="utf-8-sig")))
+        self.default_candidates = model_candidates(candidates, model)
         self.status.update(model_id=model, model_label=spec["label"],
+                           checkpoint_source=spec.get("checkpoint_source", {"source": "local", "path": str(self.checkpoint)}),
                            checkpoint=str(self.checkpoint), clarification=spec["clarification"],
                            session_memory=spec.get("session_memory", spec["clarification"]),
                            max_history_depth=spec.get("max_history_depth", 2),
-                           candidate_config=candidate_file.name,
+                           candidate_config=self._candidate_config_path.name if self._candidate_config_path else "inline",
                            default_candidates=self.default_candidates,
                            available_models=[s for s in self.specs.values() if not s.get("archived") or s["id"] == model])
 

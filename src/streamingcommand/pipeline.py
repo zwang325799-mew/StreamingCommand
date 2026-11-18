@@ -2,12 +2,17 @@
 import asyncio
 from contextlib import suppress
 import copy
+from pathlib import Path
 from .config import StreamingConfig
 
 
 class StreamingCommand:
-    def __init__(self, config=None, *, asr_backend=None, command_backend=None):
-        self.config = StreamingConfig.load(config) if isinstance(config, (str, __import__("pathlib").Path)) else config or StreamingConfig()
+    def __init__(self, config=None, *, config_path=None, asr_backend=None, command_backend=None):
+        if config_path is not None:
+            if config is not None:
+                raise ValueError("Choose either config or config_path")
+            config = Path(config_path)
+        self.config = StreamingConfig.load(config) if isinstance(config, (str, Path)) else config or StreamingConfig()
         self.asr = asr_backend
         self.commands = command_backend
         self._lock = asyncio.Lock()
@@ -15,6 +20,11 @@ class StreamingCommand:
         self._session = None
         self._closed = False
         self._ready = False
+
+    @classmethod
+    async def initialize(cls, config_path=None):
+        """Start a recognizer with defaults or a JSON file and return the ready instance."""
+        return await cls(config_path=config_path).start()
 
     async def start(self):
         async with self._start_lock:
@@ -113,9 +123,8 @@ class StreamingCommand:
 class StreamingASR(StreamingCommand):
     """ASR-only convenience API, with the identical audio and lifecycle interfaces."""
     def __init__(self, config=None, **kwargs):
-        config = StreamingConfig.load(config) if isinstance(config, (str, __import__("pathlib").Path)) else copy.deepcopy(config or StreamingConfig())
-        config.command.enabled = False
-        super().__init__(config, **kwargs)
+        super().__init__(copy.deepcopy(config), **kwargs)
+        self.config.command.enabled = False
 
 
 class CommandStream:

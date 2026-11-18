@@ -9,24 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
+from ..config import _validate_candidates as validate_candidates
 from .paths import candidate_root
 DEFAULT_CANDIDATES = candidate_root() / "command_candidates.json"
-
-
-def validate_candidates(value):
-    if not isinstance(value, dict) or set(value) != {"I", "T", "P"}:
-        raise ValueError("candidates must contain independent I/T/P lists")
-    for slot, values in value.items():
-        if (not isinstance(values, list) or (not values and slot != "P") or
-                any(not isinstance(v, str) or not v.strip() or v == "__unresolved__" for v in values) or
-                len(set(values)) != len(values)):
-            raise ValueError(f"Invalid {slot} candidate list")
-    if not value["P"]:
-        if not set(value["I"]) <= {"give", "stop", "reset"}:
-            raise ValueError("Empty P requires give/stop/reset candidates")
-    elif any("none" not in value[s] for s in ("T", "P")):
-        raise ValueError("T/P candidate lists must include business value none")
-    return copy.deepcopy(value)
 
 
 def validate_history(value):
