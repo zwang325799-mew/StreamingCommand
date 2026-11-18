@@ -1,0 +1,18 @@
+{
+  "selected": {
+    "epoch": 1,
+    "step": 3003,
+    "selection_loss": 0.005116036377036148,
+    "validation_loss": 0.007703552454022287,
+    "complete_epoch": true,
+    "initial": "/data/users/zihan/code/PhonoCommandDialogue/notebooks/outputs/give_commands/20261111_alias_polite_joint_gpu0/best",
+    "full_training_rows": 96084
+  },
+  "weights": {
+    "adapter/adapter_model.safetensors": "19d84aad4eeaf3592589388853ff2bb5addf452e618535da690effbe9a169112",
+    "head.safetensors": "1980abcc572e8d5842ce915c0d4cb52e17bb0a61ff4f598399df3fe0e56be1f6",
+    "clarify_head.pt": "98566e096eb9cee5be2c4eb1f766b237e1d7cdf39f06d0d4fe30b9899610ace1",
+    "experiment.json": "6f28cb27c1a2905ccce13e71402dd2f4ceb7069dc405f649df68bca4b2c639e2",
+    "COMPLETE.json": "6f28cb27c1a2905ccce13e71402dd2f4ceb7069dc405f649df68bca4b2c639e2"
+  }
+}

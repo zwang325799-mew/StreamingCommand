@@ -1,0 +1,9 @@
+{
+  "epoch": 1,
+  "step": 3003,
+  "selection_loss": 0.005116036377036148,
+  "validation_loss": 0.007703552454022287,
+  "complete_epoch": true,
+  "initial": "/data/users/zihan/code/PhonoCommandDialogue/notebooks/outputs/give_commands/20261111_alias_polite_joint_gpu0/best",
+  "full_training_rows": 96084
+}

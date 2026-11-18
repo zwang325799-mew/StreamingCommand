@@ -1,0 +1,22 @@
+{
+  "selected": {
+    "epoch": 1,
+    "step": 936,
+    "selection_loss": 0.0885523355932228,
+    "validation_loss": 0.05925890604761962,
+    "complete_epoch": true,
+    "initial": "/data/users/zihan/code/PhonoCommandDialogue/notebooks/outputs/single_model_clarification/20261112_full_new_baseline_gpu0/best",
+    "source_training_rows": 106810,
+    "training_rows": 29943,
+    "full_new_rows": 10726,
+    "replay_rows": 19217
+  },
+  "weights": {
+    "adapter/adapter_config.json": "9a993407d5b8109832ef1bc75bd65f10a045f85d899bd66e5a140e4357e40100",
+    "adapter/adapter_model.safetensors": "bf39f981d2736e2ad8fd5584ac48a4436d6813dfc9fb0c46b123f216ae4a627d",
+    "head.safetensors": "60966489102674fc746365fed5ef42de2a77435a3ee9ad5f974600249f3b9cb5",
+    "clarify_head.pt": "3ce4a521c8ece6cad3092953faacfb74bad9659d6d0047a023ed7519642d2dbe",
+    "experiment.json": "85e147a268d801d4da52e2b0fd9fec0178f8565aeff496a128f1a5add66767f6",
+    "COMPLETE.json": "85e147a268d801d4da52e2b0fd9fec0178f8565aeff496a128f1a5add66767f6"
+  }
+}
