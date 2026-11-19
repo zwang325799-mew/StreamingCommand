@@ -8,5 +8,8 @@ from .endpoint_commit import YueEndpointCommitSession
 
 class BoundedYueEndpointCommitSession(YueEndpointCommitSession):
     def __init__(self,*args,**kwargs):
+        """Use the deployed 380 ms continuation bound unless the caller explicitly supplies a different
+        one.
+        """
         kwargs.setdefault('continuation_gap_ms',380)
         super().__init__(*args,**kwargs)

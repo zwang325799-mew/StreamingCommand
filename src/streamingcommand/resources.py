@@ -11,6 +11,7 @@ from ._runtime.paths import ASSETS, CACHE, model_path
 
 
 def sha256(path):
+    """Hash a file incrementally so multi-gigabyte model weights need not fit in memory."""
     digest = hashlib.sha256()
     with Path(path).open("rb") as source:
         for block in iter(lambda: source.read(8 * 1024 * 1024), b""):
@@ -20,6 +21,7 @@ def sha256(path):
 
 class ModelStore:
     def __init__(self, cache_dir=None, *, offline=False):
+        """Read the bundled model manifest and record the cache root and offline policy."""
         self.root = Path(cache_dir or CACHE) / "models"
         self.offline = offline
         self.manifest = json.loads((ASSETS / "models.json").read_text(encoding="utf-8"))
@@ -47,6 +49,7 @@ class ModelStore:
         return store
 
     def _default_source(self, name):
+        """Resolve a known resource to its pinned upstream entry or its packaged checkpoint."""
         if name in self.manifest:
             spec = self.manifest[name]
             entry = {"source": "huggingface", "url": "https://huggingface.co/" + spec["repo_id"],
@@ -63,6 +66,7 @@ class ModelStore:
         return dict(self._sources.get(name) or self._default_source(name))
 
     def ensure(self, name, override=None):
+        """Materialize a configured resource and check the required files and optional checkpoint step."""
         entry = self.source(name) if not override else {"source": "local", "path": override}
         path = self._resolve(name, entry)
         if name in CHECKPOINTS:
@@ -83,6 +87,7 @@ class ModelStore:
         return path
 
     def _resolve(self, name, entry):
+        """Resolve directories, bundled files, or pinned downloads with atomic cache replacement."""
         if entry["source"] == "local":
             path = Path(entry["path"]).expanduser().absolute()
             if not path.is_dir():

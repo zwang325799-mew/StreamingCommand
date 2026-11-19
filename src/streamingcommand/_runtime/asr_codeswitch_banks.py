@@ -12,6 +12,7 @@ PROFILES = ('control', 'base_prior40', 'base_cantonese40', 'base_classifiers40',
 
 
 def policy(profile, **kwargs):
+    """Select a bank or compact context for eligible diagnostic requests while keeping the same raw audio."""
     if profile not in PROFILES:
         raise ValueError(profile)
     if profile == 'control':
@@ -32,12 +33,16 @@ def policy(profile, **kwargs):
 
 
 def configure(asr, profile):
+    """Require one shared ASR engine and install the selected bank comparison policy."""
     if asr.status.get('asr_engine_count') != 1 or profile not in PROFILES:
         raise ValueError('Invalid single-engine candidate')
     if not getattr(asr, '_actual_variant_metadata_installed', False):
         original = asr._continuity.original_request
 
         async def request(op, **kwargs):
+            """Record the resolved primary or alternate model directory for the bank the worker actually
+            used.
+            """
             response = await original(op, **kwargs)
             variant = (response.get('shared_engine') or {}).get('variant')
             if op == 'transcribe' and variant in ('base', 'v15'):

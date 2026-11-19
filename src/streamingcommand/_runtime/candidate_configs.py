@@ -17,12 +17,14 @@ REGISTRY = CONFIG_ROOT / "candidate_profiles.json"
 
 class CandidateConfigs:
     def __init__(self, directory=PROFILE_ROOT, registry=None):
+        """Select the candidate file directory and registry and establish a lock for profile updates."""
         self.directory = Path(directory)
         self.registry = Path(registry) if registry else (REGISTRY if self.directory == PROFILE_ROOT else self.directory.parent / "candidate_profiles.json")
         self._lock = threading.RLock()
 
     @staticmethod
     def filename(name):
+        """Normalize a profile name to a safe single JSON filename."""
         if not isinstance(name, str):
             raise ValueError("请输入配置名称")
         name = name.strip()
@@ -34,6 +36,7 @@ class CandidateConfigs:
         return name + ".json"
 
     def _path(self, name):
+        """Build the profile path while rejecting symbolic links."""
         path = self.directory / self.filename(name)
         if path.is_symlink():
             raise ValueError("配置文件不能是符号链接")
@@ -41,6 +44,7 @@ class CandidateConfigs:
 
     @staticmethod
     def _write(path, value):
+        """Flush a complete JSON record before atomically replacing its destination."""
         path.parent.mkdir(parents=True, exist_ok=True)
         temp_name = None
         try:
@@ -56,6 +60,7 @@ class CandidateConfigs:
                 Path(temp_name).unlink()
 
     def _defaults(self):
+        """Read and validate the registry that maps model IDs to default profiles."""
         if not self.registry.exists():
             return {"version": 1, "defaults": {}}
         value = json.loads(self.registry.read_text())
@@ -64,10 +69,12 @@ class CandidateConfigs:
         return value
 
     def default_path(self, model, fallback):
+        """Choose the model's registered candidate profile or the supplied fallback."""
         name = self._defaults()["defaults"].get(model)
         return self._path(name) if name else Path(fallback)
 
     def list(self):
+        """List readable profiles with slot counts alongside unreadable-file errors."""
         with self._lock:
             files, errors = [], []
             for path in sorted(self.directory.glob("*.json"), key=lambda p: p.name.casefold()):
@@ -79,6 +86,7 @@ class CandidateConfigs:
             return {"configs": files, "errors": errors, "defaults": self._defaults()["defaults"]}
 
     def read(self, name):
+        """Read and validate one named I/T/P profile under the directory lock."""
         with self._lock:
             path = self._path(name)
             if not path.is_file():
@@ -86,6 +94,7 @@ class CandidateConfigs:
             return {"name": path.name, "candidates": validate_candidates(json.loads(path.read_text()))}
 
     def save(self, name, candidates, *, create=False):
+        """Create or update a profile with separate checks for the two operations."""
         candidates = validate_candidates(candidates)
         with self._lock:
             path = self._path(name)
@@ -97,6 +106,8 @@ class CandidateConfigs:
             return {"name": path.name, "candidates": candidates}
 
     def rename(self, name, new_name):
+        """Rename a profile and update model defaults, restoring the filename if the registry update fails.
+        """
         with self._lock:
             old, new = self._path(name), self._path(new_name)
             if not old.is_file():

@@ -80,6 +80,9 @@ def model_candidates(candidates, model):
 
 
 def model_history(history, model):
+    """Limit current models to H1 and normalize legacy rotate history only for the clarification
+    checkpoints.
+    """
     result = dict(history)
     if model in H1_MODELS or model == PUBLISHED_MODEL:
         result = {"H1": result["H1"]} if result.get("H1") else {}
@@ -89,6 +92,7 @@ def model_history(history, model):
 
 
 def model_specs(checkpoint=None):
+    """Return independent copies of the model metadata so runtime selection can attach resolved paths."""
     specs = {key: dict(value) for key, value in MODEL_SPECS.items()}
     if checkpoint is not None:
         specs["legacy"]["checkpoint"] = str(Path(checkpoint).resolve())

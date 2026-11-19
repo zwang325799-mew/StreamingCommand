@@ -3,6 +3,7 @@ import numpy as np
 
 
 def acoustic_span(pcm):
+    """Measure the span between active 10 ms PCM16 blocks using a floor and peak-relative RMS threshold."""
     samples=np.frombuffer(pcm,dtype='<i2').astype(np.float64)
     if not len(samples):return {'active_span_ms':0.,'threshold_dbfs':-55.}
     blocks=[samples[i:i+160] for i in range(0,len(samples),160)]

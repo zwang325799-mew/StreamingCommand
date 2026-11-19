@@ -13,7 +13,7 @@ from .command_backend import DEFAULT_CANDIDATES, validate_candidates, validate_h
 from .candidate_configs import CandidateConfigs
 from .command_models import DEFAULT_MODEL, model_specs, model_candidates, model_history
 from ..config import PUBLISHED_MODEL
-from .device_policy import DEFAULT_DEVICE, resolve_device
+from .device_policy import DEFAULT_DEVICE, resolve_device, worker_visibility
 
 ROOT = Path(__file__).resolve().parent
 
@@ -21,7 +21,10 @@ ROOT = Path(__file__).resolve().parent
 class SelectableCommandParser:
     def __init__(self, model=DEFAULT_MODEL, *, checkpoint=None, candidates_file=None, candidates=None,
                  device=DEFAULT_DEVICE, logs_root=None, python=None, checkpoint_overrides=None, base_model_dir=None, use_cuda_graphs=True, expected_gpu_uuid=None,
-                 checkpoint_sources=None):
+                 checkpoint_sources=None, candidate_profiles_dir=None):
+        """Configure checkpoint specs, candidate profiles, and an isolated command worker without loading
+        it.
+        """
         self.device, self.gpu_uuid = resolve_device(device)
         self.gpu_uuid = expected_gpu_uuid or self.gpu_uuid
         self.python = str(python or sys.executable)
@@ -39,6 +42,7 @@ class SelectableCommandParser:
         if model not in self.specs:
             raise ValueError("Unknown command model")
         self._candidates_file = Path(candidates_file) if candidates_file else None
+        self._profiles = CandidateConfigs(candidate_profiles_dir) if candidate_profiles_dir else CandidateConfigs()
         self._inline_candidates = validate_candidates(candidates) if candidates is not None else None
         self.logs_root = Path(logs_root or __import__("streamingcommand._runtime.paths",fromlist=["LOGS"]).LOGS)
         self.status = {"backend": "qwen-prefill", "state": "idle", "ready": False,
@@ -51,6 +55,9 @@ class SelectableCommandParser:
         self._closed = False
 
     def _select(self, model):
+        """Install a model's checkpoint and candidate defaults while clearing identity fields from the
+        prior model.
+        """
         spec = self.specs[model]
         for key in ("base_model", "base_model_id", "adapter_layout", "lora_rank", "initial_ar_adapter",
                     "checkpoint_step", "source_checkpoint", "source_best_step", "parser_checkpoint",
@@ -62,7 +69,7 @@ class SelectableCommandParser:
         candidates = self._inline_candidates
         self._candidate_config_path = None
         if candidates is None:
-            candidate_file = self._candidates_file or CandidateConfigs().default_path(model, DEFAULT_CANDIDATES)
+            candidate_file = self._candidates_file or self._profiles.default_path(model, DEFAULT_CANDIDATES)
             self._candidate_config_path = candidate_file.resolve()
             candidates = validate_candidates(json.loads(candidate_file.read_text(encoding="utf-8-sig")))
         self.default_candidates = model_candidates(candidates, model)
@@ -76,9 +83,11 @@ class SelectableCommandParser:
                            available_models=[s for s in self.specs.values() if not s.get("archived") or s["id"] == model])
 
     def prepare_candidates(self, candidates):
+        """Validate a pool and normalize it for the model's candidate schema."""
         return model_candidates(validate_candidates(candidates), self.status["model_id"])
 
     def candidate_config_renamed(self, old_path, new_path):
+        """Update the tracked candidate file when the active profile is renamed."""
         if self._candidate_config_path == Path(old_path).resolve():
             self._candidate_config_path = Path(new_path).resolve()
             self.status["candidate_config"] = self._candidate_config_path.name
@@ -86,9 +95,11 @@ class SelectableCommandParser:
                 self._candidates_file = self._candidate_config_path
 
     def prepare_history(self, history):
+        """Validate the request history and enforce the selected model's history depth."""
         return model_history(validate_history(history), self.status["model_id"])
 
     async def _rpc(self, operation, **kwargs):
+        """Send one JSON operation to the owned worker and return its result or reported error."""
         if self._process is None or self._process.returncode is not None:
             raise RuntimeError("LLM worker is not running")
         self._process.stdin.write((json.dumps({"op": operation, **kwargs}, ensure_ascii=False) + "\n").encode())
@@ -102,6 +113,7 @@ class SelectableCommandParser:
         return result["result"]
 
     async def _owned_rpc(self, operation, **kwargs):
+        """Keep reply consumption shielded so cancellation does not desynchronize subsequent requests."""
         # Cancellation cannot leave an unread response in the protocol stream.
         task = asyncio.create_task(self._rpc(operation, **kwargs))
         try:
@@ -114,6 +126,7 @@ class SelectableCommandParser:
             raise
 
     async def _stop_worker(self):
+        """Detach and stop the retained worker handle, then close its log."""
         process, self._process = self._process, None
         try:
             if process is not None:
@@ -133,15 +146,16 @@ class SelectableCommandParser:
             self.status.pop("worker_pid", None)
 
     async def _load(self):
+        """Resolve worker GPU visibility and load the requested checkpoint in a fresh child process."""
+        visible = worker_visibility(self.device, os.environ)
         self.status.update(state="loading", ready=False, error=None)
         self.logs_root.mkdir(parents=True, exist_ok=True)
         path = self.logs_root / f"llm-{self.status['model_id']}-{time.time_ns()}.log"
         self._log = path.open("ab", buffering=0)
         self.status["log_path"] = str(path)
-        environment = dict(os.environ, CUDA_VISIBLE_DEVICES=self.device.split(":")[-1] if self.device.startswith("cuda:") else "",
+        environment = dict(os.environ, CUDA_VISIBLE_DEVICES=visible,
                            STREAMINGCOMMAND_DEVICE=self.device,
                            STREAMINGCOMMAND_EXPECTED_GPU_UUID=self.gpu_uuid,
-                           PHONO_DEMO_GPU_UUID=self.gpu_uuid, CUDA_DEVICE_ORDER="PCI_BUS_ID",
                            TOKENIZERS_PARALLELISM="false", OMP_NUM_THREADS="4")
         try:
             self._process = await asyncio.create_subprocess_exec(
@@ -159,6 +173,7 @@ class SelectableCommandParser:
             raise
 
     async def start(self):
+        """Load the selected command model if it is not already ready."""
         async with self._lock:
             if self._closed:
                 raise RuntimeError("Command backend is closed")
@@ -166,6 +181,7 @@ class SelectableCommandParser:
                 await self._load()
 
     async def switch(self, model):
+        """Release the previous command worker before starting the selected one."""
         if model not in self.specs:
             raise ValueError("Unknown command model")
         async with self._lock:
@@ -179,6 +195,7 @@ class SelectableCommandParser:
             return dict(self.status)
 
     async def _request(self, operation, **kwargs):
+        """Serialize operations against a ready worker and expose fatal transport failures in status."""
         async with self._lock:
             if self._closed or not self.status["ready"]:
                 raise RuntimeError("Command model is not ready")
@@ -189,33 +206,40 @@ class SelectableCommandParser:
                 raise
 
     async def parse(self, utterance, candidates, history=None):
+        """Parse a standalone utterance using the supplied candidates and history."""
         return await self.parse_turn(utterance, candidates, history)
 
     async def parse_turn(self, utterance, candidates, history=None, *, session_id=None, commit=False):
+        """Validate an utterance and send a preview or committing turn with its optional session identity."""
         if not isinstance(utterance, str) or not utterance.strip():
             raise ValueError("utterance must be nonempty text")
         return await self._request("parse", utterance=utterance, candidates=self.prepare_candidates(candidates),
                                    history=self.prepare_history(history), session_id=session_id, commit=commit)
 
     async def feedback(self, session_id, reply, clarification_id):
+        """Validate a bounded natural-language reply and send it with the pending clarification ID."""
         if not isinstance(reply, str) or not reply.strip() or len(reply) > 2000:
             raise ValueError("请输入自然语言回答（最多 2000 字符）")
         return await self._request("feedback", session_id=session_id, reply=reply,
                                    clarification_id=clarification_id)
 
     async def parse_pair(self, utterance, previous, candidates, history, *, session_id):
+        """Request the current and adjacent-context parses for the same session and candidate pool."""
         return await self._request('parse_pair', utterance=utterance, previous=previous,
             candidates=self.prepare_candidates(candidates), history=self.prepare_history(history),
             session_id=session_id)
 
     async def clear_memory(self, session_id):
+        """Reset the command worker's pending state for the identified session."""
         return await self._request("clear", session_id=session_id)
 
     async def end_session(self, session_id):
+        """Release session state if the command worker is still running."""
         if not self._closed and self.status["ready"]:
             await self._request("end", session_id=session_id)
 
     async def close(self):
+        """Stop the command worker under its request lock and prevent further use."""
         async with self._lock:
             self._closed = True
             self.status.update(state="closed", ready=False)

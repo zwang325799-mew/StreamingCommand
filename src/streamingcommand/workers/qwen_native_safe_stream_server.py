@@ -83,6 +83,7 @@ def temporary_safe_finish_prefix(tokenizer, state):
 
 
 def arguments():
+    """Parse the safe-stream worker's model, generation, and optional bank options."""
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", default=str(root / ".model-cache/qwen3-asr-1.7b"))
@@ -95,6 +96,7 @@ def arguments():
 
 
 def main():
+    """Load the legacy engine and serve ASR requests with guarded streaming finalization."""
     args = arguments()
     # Keep a dedicated protocol descriptor, then route fd 1 to stderr. This also
     # catches native code and spawned vLLM workers which bypass redirect_stdout.
@@ -104,6 +106,7 @@ def main():
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
 
     def emit(payload):
+        """Write a flushed JSON response while native library output stays off the protocol stream."""
         protocol.write(json.dumps(payload, ensure_ascii=False) + "\n")
         protocol.flush()
 
@@ -176,6 +179,7 @@ def main():
     original_generate = asr.model.generate
 
     def measured_generate(*call_args, **call_kwargs):
+        """Capture generation counts, timings, and token metadata for the current request."""
         inputs = call_args[0] if call_args else call_kwargs.get("prompts", [])
         started = time.perf_counter()
         results = original_generate(*call_args, **call_kwargs)
@@ -213,6 +217,7 @@ def main():
     safe_prefix_adjustment = None
 
     def audio_from_request(request):
+        """Decode a base64 request into finite little-endian float32 waveform samples."""
         raw = base64.b64decode(request["audio_float32_b64"], validate=True)
         if len(raw) % 4:
             raise ValueError("audio_float32_b64 must contain little-endian float32 bytes")

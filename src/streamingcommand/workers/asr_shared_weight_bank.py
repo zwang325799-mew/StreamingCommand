@@ -11,8 +11,12 @@ import time
 
 
 def verify_model_compatibility(primary_dir, alternate_dir):
+    """Require matching computational settings and byte-identical frontends before sharing the legacy
+    engine.
+    """
     directories=[Path(primary_dir),Path(alternate_dir)]
     def normalized(value):
+        """Remove non-computational metadata keys recursively before comparing checkpoint configs."""
         if isinstance(value,dict):
             return {k:normalized(v) for k,v in value.items()
                     if k not in {'model_type','dtype','transformers_version'}}
@@ -33,6 +37,7 @@ def verify_model_compatibility(primary_dir, alternate_dir):
 
 
 def runtime_parameter_name(name):
+    """Translate Hugging Face tensor names to the legacy vLLM stacked parameter layout."""
     if name.startswith('thinker.model.'):
         name='language_model.model.'+name.removeprefix('thinker.model.')
         for part in ('q','k','v'):
@@ -48,6 +53,7 @@ def runtime_parameter_name(name):
 
 class WeightBankExtension:
     def prepare_asr_banks(self, primary_dir, alternate_dir, bank_mode='copy'):
+        """Prepare the exact alternate weights while retaining the active graph parameter addresses."""
         import torch
         from safetensors import safe_open
         model=self.model_runner.model
@@ -82,6 +88,9 @@ class WeightBankExtension:
         if not set(names)<=parameters.keys():raise ValueError(str(set(names)-parameters.keys()))
         primary={k:parameters[k].detach().clone() for k in names}
         def alternate_weights():
+            """Read matching alternate tensors from safetensors shards for installation into the inactive
+            bank.
+            """
             for key in different:
                 with safe_open(str(Path(alternate_dir)/indexes[1][key]),framework='pt',device='cpu') as f:
                     yield key,f.get_tensor(key).to(torch.float16)
@@ -107,6 +116,7 @@ class WeightBankExtension:
                 'variant':'v15','lossless':True,'fixed_graph_parameter_addresses':True}
 
     def _exchange_asr_parameters(self):
+        """Exchange live parameters with the inactive bank using preallocated scratch storage."""
         for name,param in self._asr_bank_parameters.items():
             temporary=self._asr_swap_scratch[:param.numel()].view_as(param)
             temporary.copy_(param.data)
@@ -114,6 +124,7 @@ class WeightBankExtension:
             self._asr_inactive_bank[name].copy_(temporary)
 
     def select_asr_bank(self, variant):
+        """Activate the requested exact bank and report whether its weights changed."""
         import torch
         if variant not in ('v15','base'):raise ValueError('Unknown ASR bank '+variant)
         changed=variant!=self._asr_bank_variant
@@ -131,12 +142,14 @@ class WeightBankExtension:
 
 class SharedEngineController:
     def __init__(self, llm, primary_dir, alternate_dir, bank_mode='copy'):
+        """Prepare weights in the owned vLLM worker and retain its inventory and active bank."""
         self.llm=llm;self.variant='v15'
         compatibility=verify_model_compatibility(primary_dir,alternate_dir)
         self.inventory=llm.collective_rpc('prepare_asr_banks',args=(str(primary_dir),str(alternate_dir),bank_mode))[0]
         self.inventory['compatibility']=compatibility
 
     def select(self, variant):
+        """Reset prefix and multimodal caches before selecting a different legacy ASR bank."""
         if variant not in ('v15','base'):raise ValueError('Unknown ASR variant '+variant)
         started=time.perf_counter();changed=variant!=self.variant
         if changed:

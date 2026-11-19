@@ -14,6 +14,9 @@ from .streaming import FRAME_SAMPLES, SAMPLE_RATE, StreamingSession
 
 class EndpointContinuationSession(StreamingSession):
     def __init__(self, *args, continuation_gap_ms=440, **kwargs):
+        """Initialize the unpublished-endpoint tracking state and bound how long an observed resumption can
+        link.
+        """
         super().__init__(*args, **kwargs)
         if not self.endpoint_ms <= continuation_gap_ms <= 1000:
             raise ValueError('Continuation gap must cover the endpoint and be <=1000ms')
@@ -27,6 +30,7 @@ class EndpointContinuationSession(StreamingSession):
                           endpoint_wait_added_ms=0)
 
     def _frame(self, frame, valid_samples):
+        """Retain observed acoustic resumption while processing the ordinary frame and endpoint logic."""
         # A small raw PCM tail fills any silence between two non-overlapping
         # original segments. Never reconstruct or omit samples in that gap.
         self._audio_tail.extend(frame[:valid_samples * 2])
@@ -38,6 +42,7 @@ class EndpointContinuationSession(StreamingSession):
         super()._frame(frame, valid_samples)
 
     def _submit_final(self, reason):
+        """Keep the original silence-ending job provisional for an eligible in-flight continuation."""
         super()._submit_final(reason)
         if reason == 'vad_silence':
             self._tentative = self._finals[-1]
@@ -45,6 +50,9 @@ class EndpointContinuationSession(StreamingSession):
             self._tentative = None
 
     def _resume(self, event):
+        """Join an observed successor to an unpublished decode only while the acoustic gap is within
+        bounds.
+        """
         job = self._tentative
         active = self._active
         if job is None or active is None or job.segment_id in self._finalized:
@@ -76,6 +84,7 @@ class EndpointContinuationSession(StreamingSession):
         self._tentative = None
 
     def _emit(self, event):
+        """Publish an overlapped physical final as provisional when the continuation has already started."""
         if event['type'] == 'speech.started':
             self._resume(event)
         if event['type'] == 'transcript.final':
@@ -97,6 +106,7 @@ class EndpointContinuationSession(StreamingSession):
         super()._emit(event)
 
     async def _decode(self, job):
+        """Restore prior acoustic history if the current physical decode was reclassified as provisional."""
         helper = getattr(self.asr, '_continuity', None)
         previous_history = copy.deepcopy(helper.history) if helper is not None else None
         self._decoding_job = job

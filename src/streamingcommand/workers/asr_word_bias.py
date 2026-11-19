@@ -3,6 +3,7 @@ import re
 
 
 def whole_word_bias(tokenizer, words, weight):
+    """Bias only tokens whose complete encoding matches a supported form of a vocabulary word."""
     weight = float(weight)
     if not 0 <= weight <= 3:
         raise ValueError('Word bias must be between 0 and 3')

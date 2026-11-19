@@ -15,6 +15,7 @@ MODEL_DIR = model_path("speech")
 
 class AcousticSpeechEvidence:
     def __init__(self, model_dir=None, threshold=.5):
+        """Record the Silero model directory and threshold without opening an ONNX session."""
         self.model_dir = Path(model_dir or model_path("speech"))
         self.threshold = threshold
         self._model = None
@@ -23,9 +24,11 @@ class AcousticSpeechEvidence:
 
     @property
     def is_loaded(self):
+        """Report whether a ready ONNX speech-evidence session is resident."""
         return self._model is not None
 
     def _load(self):
+        """Verify the model against its provenance and warm a single-threaded CPU ONNX session."""
         import json
         import onnxruntime as ort
         model_path = self.model_dir / 'silero_vad.onnx'
@@ -40,6 +43,7 @@ class AcousticSpeechEvidence:
         self._predict(bytes(32000))
 
     async def start(self):
+        """Load the CPU session on a dedicated executor and release it if initialization fails."""
         async with self._lock:
             if self.is_loaded:
                 return
@@ -57,6 +61,9 @@ class AcousticSpeechEvidence:
                 raise
 
     def _predict(self, pcm):
+        """Run independent 512-sample VAD windows with reset recurrent state and report the peak speech
+        score.
+        """
         started = time.monotonic()
         audio = np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768.
         state = np.zeros((2, 1, 128), np.float32)
@@ -86,6 +93,7 @@ class AcousticSpeechEvidence:
                 'language_or_transcript_used': False, 'extra_audio_wait_ms': 0}
 
     async def classify(self, pcm):
+        """Serialize speech-evidence inference and drain work before propagating cancellation."""
         async with self._lock:
             if not self.is_loaded:
                 raise RuntimeError('Acoustic speech helper is not ready')
@@ -97,6 +105,7 @@ class AcousticSpeechEvidence:
                 raise
 
     async def close(self):
+        """Release the ONNX session and shut down the dedicated inference executor."""
         async with self._lock:
             self._model = None
             if self._executor is not None:

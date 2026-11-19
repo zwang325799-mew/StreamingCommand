@@ -20,6 +20,7 @@ cache = {}
 
 
 def transcribe(self, audio, context='', language=None, **kwargs):
+    """Apply a validated fixed domain prior for one transcribe call and restore the original sampler."""
     if not context.startswith(MARKER):
         return original_transcribe(self, audio=audio, context=context, language=language, **kwargs)
     spec = json.loads(context[len(MARKER):])

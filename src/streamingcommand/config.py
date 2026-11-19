@@ -7,6 +7,7 @@ import copy
 
 
 def _validate_candidates(value):
+    """Copy an ordered I/T/P pool after checking uniqueness and the empty-P command restriction."""
     if not isinstance(value, dict) or set(value) != {"I", "T", "P"}:
         raise ValueError("candidates must contain independent I/T/P lists")
     for slot, values in value.items():
@@ -34,8 +35,10 @@ class ASRConfig:
     speech_model_dir: str | None = None
     expected_gpu_uuid: str | None = None
     warmup: bool = True
+    compatibility_lock_file: str | None = None
 
     def __post_init__(self):
+        """Check that the ASR backend exists and that the profile uses a single engine."""
         if self.backend not in {"native", "vllm", "vllm-builtin", "fake"}:
             raise ValueError("ASR backend must be native, vllm, vllm-builtin or fake")
         if self.profile == "v15-speech-aware-dual":
@@ -55,8 +58,10 @@ class CommandConfig:
     use_cuda_graphs: bool = True
     expected_gpu_uuid: str | None = None
     candidates: dict[str, list[str]] | None = None
+    candidate_profiles_dir: str | None = None
 
     def __post_init__(self):
+        """Validate inline candidates and require a single candidate source."""
         if self.candidates is not None and self.candidates_file is not None:
             raise ValueError("Choose either command.candidates or command.candidates_file")
         if self.candidates is not None:
@@ -70,6 +75,7 @@ CHECKPOINTS = (*BUNDLED_CHECKPOINTS, PUBLISHED_MODEL)
 
 
 def _validate_sources(models):
+    """Verify model names, source-specific fields, and pinned Hugging Face revisions."""
     valid_names = {*ASR_RESOURCES, "llm-base", *CHECKPOINTS}
     if not isinstance(models, dict) or set(models) - valid_names:
         raise ValueError(f"models must map known resource names: {sorted(valid_names)}")
@@ -121,6 +127,7 @@ class StreamingConfig:
     models: dict[str, dict[str, str | int]] = field(default_factory=dict)
 
     def __post_init__(self):
+        """Check model and recognition-logic compatibility along with segment and queue capacities."""
         _validate_sources(self.models)
         if self.command.enabled and self.command.model not in CHECKPOINTS:
             raise ValueError(f"Unknown command.model: {self.command.model}")
@@ -133,6 +140,7 @@ class StreamingConfig:
 
     @classmethod
     def load(cls, path):
+        """Read a JSON config and anchor local resource paths to that file's directory."""
         path = Path(path)
         value = json.loads(path.read_text(encoding="utf-8-sig"))
         if not isinstance(value, dict):
@@ -143,8 +151,8 @@ class StreamingConfig:
         value["asr"] = ASRConfig(**value.get("asr", {}))
         value["command"] = CommandConfig(**value.get("command", {}))
         # User paths are relative to their config, never to the current cwd.
-        for obj, names in [(value["asr"], ("python", "model_dir", "alternate_model_dir", "language_model_dir", "speech_model_dir")),
-                           (value["command"], ("python", "checkpoint", "base_model_dir", "candidates_file"))]:
+        for obj, names in [(value["asr"], ("python", "model_dir", "alternate_model_dir", "language_model_dir", "speech_model_dir", "compatibility_lock_file")),
+                           (value["command"], ("python", "checkpoint", "base_model_dir", "candidates_file", "candidate_profiles_dir"))]:
             for name in names:
                 item = getattr(obj, name)
                 if item and not Path(item).is_absolute():

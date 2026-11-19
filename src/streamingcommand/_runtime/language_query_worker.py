@@ -12,10 +12,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def emit(result):
+    """Write one flushed JSON reply onto the language worker's protocol stream."""
     print(json.dumps(result), file=protocol_stdout, flush=True)
 
 
 def main():
+    """Load the CPU language helper and handle one classification or control request per line."""
     parser=argparse.ArgumentParser()
     parser.add_argument('--model-dir',type=Path,required=True)
     parser.add_argument('--int8',action='store_true')

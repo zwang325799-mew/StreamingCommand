@@ -83,6 +83,7 @@ def temporary_safe_finish_prefix(tokenizer, state):
 
 
 def arguments():
+    """Parse the legacy streaming worker's model, cache, and endpoint-prefix options."""
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", default=str(root / ".model-cache/qwen3-asr-1.7b"))
@@ -98,6 +99,7 @@ def arguments():
 
 
 def main():
+    """Serve isolated legacy ASR operations with optional shared banks and retained-prefix finalization."""
     args = arguments()
     shared_engine = None
     selection_audit = {}
@@ -109,6 +111,7 @@ def main():
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
 
     def emit(payload):
+        """Write one flushed JSON event onto the worker's reserved protocol stream."""
         if shared_engine is not None:
             payload = {**payload, 'shared_engine': dict(selection_audit)}
         protocol.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -196,6 +199,7 @@ def main():
     original_generate = asr.model.generate
 
     def measured_generate(*call_args, **call_kwargs):
+        """Record generation timing, retained prompt prefix, and token reuse for the current request."""
         inputs = call_args[0] if call_args else call_kwargs.get("prompts", [])
         started = time.perf_counter()
         results = original_generate(*call_args, **call_kwargs)
@@ -234,6 +238,7 @@ def main():
     safe_prefix_adjustment = None
 
     def audio_from_request(request):
+        """Decode base64 float32 PCM payloads for the legacy prefix-final worker."""
         raw = base64.b64decode(request["audio_float32_b64"], validate=True)
         if len(raw) % 4:
             raise ValueError("audio_float32_b64 must contain little-endian float32 bytes")

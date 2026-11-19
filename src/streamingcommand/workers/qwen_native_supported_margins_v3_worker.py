@@ -13,6 +13,7 @@ original_transcribe = Qwen3ASRModel.transcribe
 
 
 def transcribe(self, audio, **kwargs):
+    """Apply supported silence-margin normalization before the native one-pass transcribe call."""
     if not (isinstance(audio, tuple) and audio[1] == 16000 and isinstance(audio[0], np.ndarray)):
         raise ValueError('The margin policy requires mono16k tuple input')
     pcm = np.rint(audio[0] * 32768).clip(-32768, 32767).astype(np.int16)

@@ -11,6 +11,7 @@ PROFILES = ('control', 'calibrated_classifier', 'calibrated_phrases_classifier',
 
 
 def policy(profile, **kwargs):
+    """Substitute the calibrated fixed vocabulary for an acoustically eligible mixed-language request."""
     if profile not in PROFILES:
         raise ValueError(profile)
     if profile == 'control':
@@ -30,6 +31,7 @@ def policy(profile, **kwargs):
 
 
 def configure(asr, profile):
+    """Apply the calibrated prior policy on the boundary-protected worker path."""
     configure_metadata(asr, 'control')
     if profile not in PROFILES:
         raise ValueError(profile)

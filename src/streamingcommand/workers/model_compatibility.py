@@ -3,8 +3,10 @@ import hashlib
 from pathlib import Path
 
 def verify_model_compatibility(primary_dir, alternate_dir):
+    """Check computational config and frontend bytes before sharing weights in one native ASR model."""
     directories=[Path(primary_dir),Path(alternate_dir)]
     def normalized(value):
+        """Discard known metadata-only fields recursively before comparing the two model configs."""
         if isinstance(value,dict):
             return {k:normalized(v) for k,v in value.items()
                     if k not in {'model_type','dtype','transformers_version'}}

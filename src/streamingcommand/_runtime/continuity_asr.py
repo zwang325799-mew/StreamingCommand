@@ -10,8 +10,10 @@ from .asr_profiles import ASR_PROFILE_VERSIONS
 
 
 def continuity_asr_class(base_class):
+    """Wrap a streaming backend with causal waveform history and short-English request routing."""
     class ContinuityASR(base_class):
         def __init__(self,*args,**kwargs):
+            """Configure short and long decode paths and attach a recent-audio continuity helper."""
             kwargs.setdefault('gpu_memory_utilization',.24)
             super().__init__(*args,**kwargs)
             self._continuity_start_lock=asyncio.Lock()
@@ -26,6 +28,9 @@ def continuity_asr_class(base_class):
             primary_request=self._continuity.original_request
 
             async def route(op,**request):
+                """Route short English or explicit prefix requests to the continuity path, preserving the
+                primary path otherwise.
+                """
                 helper=self._continuity
                 hint=helper.hint or {}
                 short_english=(helper.job is not None and helper.current_eligible(helper.job.pcm)
@@ -56,6 +61,9 @@ def continuity_asr_class(base_class):
                 model_selection='acoustic_span_and_language_only_no_keyword_matching')
 
         async def start(self):
+            """Start the active backend and its configured continuity view before marking the combined
+            profile ready.
+            """
             async with self._continuity_start_lock:
                 if self.status.get('ready') and self._continuity_asr.status.get('ready'):
                     return self.status.get('worker_ready',dict(self.status))
@@ -71,13 +79,18 @@ def continuity_asr_class(base_class):
                     raise
 
         def begin_audio_session(self):
+            """Reset recent audio and hypotheses before accepting a new stream."""
             self._continuity.reset()
 
         def observe_audio(self,raw):
+            """Pass raw received PCM to the continuity helper for sample-aligned prefix selection."""
             self._continuity.observe(raw)
 
         async def decode_final(self,segment_id,pcm,*,start_sample,end_sample,
                                prefetched_acoustic_hint=None,**kwargs):
+            """Bind evidence and timing to one final decode and restore request-local prefix settings
+            afterward.
+            """
             helper=self._continuity
             original_count=helper.count
             original_preserve=self.preserve_acoustic_native_prefix
@@ -116,6 +129,7 @@ def continuity_asr_class(base_class):
                 self.final_prefix_tokens=original_rollback
 
         async def close(self):
+            """Release both backend views and discard all retained continuity audio."""
             try:await self._continuity_asr.close()
             finally:
                 await super().close()

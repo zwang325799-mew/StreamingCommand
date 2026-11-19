@@ -10,6 +10,7 @@ PROFILES = ('control', 'boundary_classifier40', 'boundary_classifier60', 'bounda
 
 
 def policy(profile, **kwargs):
+    """Turn the inherited mixed-language recipe into a boundary-protected context and prior specification."""
     if profile not in PROFILES:
         raise ValueError(profile)
     if profile == 'control':
@@ -27,6 +28,7 @@ def policy(profile, **kwargs):
 
 
 def configure(asr, profile):
+    """Install the boundary guard and tag the chosen diagnostic variant in worker status."""
     configure_metadata(asr, 'control')
     if profile not in PROFILES:
         raise ValueError(profile)

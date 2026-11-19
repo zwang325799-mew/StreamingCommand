@@ -21,6 +21,9 @@ VOCABULARY = (
 
 
 def policy(**kwargs):
+    """Use acoustic evidence to choose native short Yue decoding or bounded classifier priors for longer
+    audio.
+    """
     result = deployed_policy('fusion75', **kwargs)
     if result is None:
         return result
@@ -58,6 +61,7 @@ def policy(**kwargs):
 
 
 def configure(asr):
+    """Attach the Yue precision policy only to a single shared ASR engine."""
     if asr.status.get('asr_engine_count') != 1:
         raise ValueError('Yue precision requires one shared ASR engine')
     asr.final_request_policy = policy

@@ -15,12 +15,15 @@ import torch
 
 
 class NativeSampling:
+    # Store the per-generation token limit and initialize the optional logit prior.
     def __init__(self,max_tokens):self.max_tokens=max_tokens;self.logit_bias=None
+    # Shallow-copy sampling options so a request can replace its own logit bias.
     def clone(self):return copy.copy(self)
 
 
 class TorchGenerator:
     def __init__(self,model,processor,max_model_len,decoder_backend='hf'):
+        """Configure the native tokenizer and model bridge, including an optional CUDA graph decoder."""
         self.hf_model=model;self.processor=processor;self.max_model_len=max_model_len
         self.accelerator=None
         if decoder_backend!='hf':
@@ -30,6 +33,7 @@ class TorchGenerator:
 
     @torch.inference_mode()
     def generate(self,prompts,sampling_params,use_tqdm=False):
+        """Translate SDK-style prompts to native model inputs and return SDK-compatible generated text."""
         
         results=[]
         for item in prompts:
@@ -57,6 +61,7 @@ class TorchGenerator:
 
 class NativeWindowsASR:
     def __init__(self,model_dir,max_new_tokens=96,max_model_len=4096,decoder_backend='hf',device='cuda:0'):
+        """Load the local Qwen ASR model and processor onto the selected CPU or CUDA device."""
         from transformers import AutoConfig
         from qwen_asr_backend import Qwen3ASRConfig, Qwen3ASRForConditionalGeneration, Qwen3ASRProcessor
         from asr_consistent_features import install_native_consistent_features,install_native_consistent_attention
@@ -71,12 +76,14 @@ class NativeWindowsASR:
         self.sampling_params=NativeSampling(max_new_tokens)
 
     def _build_text_prompt(self,context,force_language):
+        """Render the multimodal chat prompt with context and any forced language marker."""
         messages=[{'role':'system','content':context or ''},
                   {'role':'user','content':[{'type':'audio','audio':''}]}]
         prompt=self.processor.apply_chat_template(messages,add_generation_prompt=True,tokenize=False)
         return prompt+(f'language {force_language}<asr_text>' if force_language else '')
 
     def transcribe(self,audio,context='',language=None,**kwargs):
+        """Generate a complete transcript for one waveform and parse the returned language and text."""
         from asr_output import parse_asr_output
         from asr_supported_margins_v3 import supported_margin_pcm
         if audio[1]!=16000:raise ValueError('Native worker requires mono16k audio')
@@ -99,6 +106,7 @@ class NativeWindowsASR:
 
     def init_streaming_state(self,context='',language=None,chunk_size_sec=.8,
                              unfixed_chunk_num=2,unfixed_token_num=5):
+        """Initialize per-segment audio buffers, prompt, and rollback settings."""
         if chunk_size_sec<=0:raise ValueError('chunk_size_sec must be positive')
         return SimpleNamespace(context=context,force_language=language,
             prompt_raw=self._build_text_prompt(context,language),chunk_id=0,
@@ -108,6 +116,8 @@ class NativeWindowsASR:
             _raw_decoded='',text='',language='')
 
     def _decode_state(self,state,final=False):
+        """Decode the accumulated waveform with the retained token prefix and update its text and language.
+        """
         from asr_output import parse_asr_output
         prefix=''
         if state.chunk_id>=state.unfixed_chunk_num:
@@ -126,6 +136,7 @@ class NativeWindowsASR:
         return state
 
     def streaming_transcribe(self,audio,state):
+        """Append PCM and decode each complete buffered chunk in the current stream."""
         # R17 complete-prefix policy: one generation consumes every available
         # sample. Reception remains asynchronous in the parent scheduler.
         wave=np.asarray(audio)
@@ -136,6 +147,7 @@ class NativeWindowsASR:
         return self._decode_state(state)
 
     def finish_streaming_transcribe(self,state):
+        """Decode any remaining buffered audio as the last streaming chunk."""
         if not len(state.buffer):return state
         state.audio_accum=np.concatenate([state.audio_accum,state.buffer])
         state.buffer=np.zeros(0,np.float32)
@@ -144,6 +156,7 @@ class NativeWindowsASR:
 
 class NativeWeightController:
     def __init__(self,generator,primary_dir,alternate_dir,bank_mode='swap'):
+        """Prepare exact alternate weights and a scratch buffer for in-place CUDA bank swaps."""
         from safetensors import safe_open
         from model_compatibility import verify_model_compatibility
         compatibility=verify_model_compatibility(primary_dir,alternate_dir)
@@ -170,6 +183,7 @@ class NativeWeightController:
 
     @torch.inference_mode()
     def select(self,variant):
+        """Exchange the active and inactive native weight banks when a different variant is requested."""
         if variant not in ('v15','base'):raise ValueError('Invalid ASR variant')
         started=time.perf_counter();changed=variant!=self.variant
         if changed:
@@ -186,9 +200,11 @@ class NativeWeightController:
 class NativePrior:
     """Apply the same bounded native token priors while protecting original boundaries."""
     def __init__(self, bias):
+        """Store the token bias mapping used by the native generation callback."""
         self.bias = bias or {}
 
     def __call__(self, input_ids, scores):
+        """Apply the configured logit bias while preserving an already preferred boundary."""
         from asr_boundary_prior_guard import BOUNDARIES
         original = scores.clone()
         best = original.argmax(-1)

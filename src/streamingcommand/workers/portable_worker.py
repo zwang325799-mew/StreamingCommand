@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 
 def fixed_bias(tokenizer, context):
+    """Decode the request's fixed prior payload and build bounded token weights for portable ASR."""
     marker = "__PHONO_DOMAIN_TOKEN_PRIOR__"
     if not context.startswith(marker):
         return context, None
@@ -26,6 +27,7 @@ def fixed_bias(tokenizer, context):
     cjk = spec.pop("cjk_words", [])
     cjk_weight = float(spec.pop("cjk_weight", 0))
     def bounded(tok, words, weight):
+        """Adapt the tokenizer's uniform-bias limit to the explicitly permitted per-word weight."""
         result = whole_word_bias(tok, words, min(float(weight), 3))
         return {key: value * float(weight) / 3 for key, value in result.items()} if float(weight) > 3 else result
     if "word_weights" not in spec:
@@ -43,6 +45,7 @@ def fixed_bias(tokenizer, context):
 class NativeBanks:
     """One loaded model; bank only differing parameters, preserve parameter addresses."""
     def __init__(self, generator, primary, alternate):
+        """Verify both checkpoints and build the exact base and mix75 banks for differing live parameters."""
         import torch
         from safetensors import safe_open
         from asr_shared_weight_bank import verify_model_compatibility
@@ -69,6 +72,7 @@ class NativeBanks:
                           "cache_policy": "new KV cache per generation", "compatibility": self.compatibility}
 
     def select(self, variant):
+        """Swap one bank in place, preserving parameter addresses for the resident engine."""
         import torch
         if variant != self.variant and variant not in self.banks:
             raise ValueError("Unknown model bank")
@@ -85,15 +89,17 @@ class NativeBanks:
 
 
 def build_engine(args):
+    """Initialize the selected native or built-in vLLM engine after checking the visible GPU identity."""
     import torch
     from asr_windows_native import NativeWindowsASR
     backend = os.environ.get("STREAMINGCOMMAND_ASR_BACKEND", "native")
     requested = os.environ.get("STREAMINGCOMMAND_DEVICE", "cpu")
     device = "cuda:0" if requested.startswith("cuda:") else "cpu"
     expected = os.environ.get("PHONO_ASR_GPU_UUID")
-    if expected and device.startswith("cuda:"):
-        actual = str(torch.cuda.get_device_properties(0).uuid).lower().removeprefix("gpu-")
-        if actual != expected.lower().removeprefix("gpu-"):
+    actual_uuid = None
+    if device.startswith("cuda:"):
+        actual_uuid = str(torch.cuda.get_device_properties(0).uuid)
+        if expected and actual_uuid.lower().removeprefix("gpu-") != expected.lower().removeprefix("gpu-"):
             raise RuntimeError("ASR GPU UUID mismatch")
     torch.set_num_threads(4)
     if backend == "native":
@@ -131,10 +137,11 @@ def build_engine(args):
         bank = BlendedEngineController(asr.model, args.model_dir, args.alternate_model_dir, bank_mode="swap")
     else:
         raise ValueError("Unknown portable backend")
-    return asr, bank, backend
+    return asr, bank, backend, actual_uuid
 
 
 def main():
+    """Serve portable ASR load, streaming, final decode, and shutdown operations over JSON lines."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--alternate-model-dir")
@@ -148,13 +155,14 @@ def main():
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     def emit(value):
+        """Write and flush a worker event to the original protocol descriptor."""
         print(json.dumps(value, ensure_ascii=False), file=protocol, flush=True)
     try:
         import numpy as np
-        asr, bank, backend = build_engine(args)
+        asr, bank, backend, device_uuid = build_engine(args)
         emit({"ok": True, "event": "ready", "backend": backend,
               "versions": {name: importlib.metadata.version(name) for name in ("torch", "transformers", "numpy")},
-              "engine_count": 1, "banks": bank.inventory if bank else None})
+              "engine_count": 1, "banks": bank.inventory if bank else None, "device_uuid": device_uuid})
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)
         emit({"ok": False, "event": "startup_error", "error": str(exc)})
@@ -168,6 +176,7 @@ def main():
     original = asr.model.generate
     operation = None
     def measured(prompts, sampling_params, use_tqdm=False):
+        """Wrap generation and retain timing and text metadata for the current ASR request."""
         started = time.perf_counter()
         results = original(prompts, sampling_params=sampling_params, use_tqdm=use_tqdm)
         for result in results:

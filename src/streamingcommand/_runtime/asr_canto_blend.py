@@ -6,6 +6,9 @@ PROFILES = ('control', 'mix25', 'mix50', 'mix75', 'mix90', 'original_calibrated'
 
 
 def policy(profile, **kwargs):
+    """Select the requested weight blend only when causal Cantonese evidence meets the diagnostic
+    threshold.
+    """
     if profile not in PROFILES:
         raise ValueError(profile)
     if profile == 'control':
@@ -27,6 +30,7 @@ def policy(profile, **kwargs):
 
 
 def configure(asr, profile):
+    """Require a single shared engine and install the diagnostic interpolation policy."""
     configure_metadata(asr, 'control')
     if profile not in PROFILES:
         raise ValueError(profile)
@@ -34,6 +38,7 @@ def configure(asr, profile):
         original = asr._continuity.original_request
 
         async def request(op, **kwargs):
+            """Report the actual interpolated bank on transcribe responses from the shared worker."""
             result = await original(op, **kwargs)
             variant = (result.get('shared_engine') or {}).get('variant', '')
             if op == 'transcribe' and variant.startswith('mix'):

@@ -8,6 +8,7 @@ from .config import ASR_RESOURCES, StreamingConfig
 
 
 def main(argv=None):
+    """Dispatch resource diagnostics, model downloads, or a file or microphone recognition run."""
     parser = argparse.ArgumentParser(prog="streaming-command")
     parser.add_argument("--config", help="JSON config; paths resolve relative to this file")
     commands = parser.add_subparsers(dest="operation", required=True)
@@ -43,6 +44,7 @@ def main(argv=None):
     else:
         from .pipeline import StreamingCommand, StreamingASR
         async def recognize():
+            """Open the selected recognizer and print one JSON object per event until shutdown."""
             kind = StreamingASR if args.asr_only else StreamingCommand
             async with kind(config) as recognizer:
                 events = recognizer.transcribe_file(args.audio) if args.audio else recognizer.listen()

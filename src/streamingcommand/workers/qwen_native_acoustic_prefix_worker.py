@@ -15,6 +15,7 @@ original = Qwen3ASRModel.transcribe
 
 
 def transcribe(self, audio, context='', language=None, **kwargs):
+    """Decode a real waveform prefix with the already observed ASR text and return the current suffix."""
     if not context.startswith(MARKER):
         return original(self, audio=audio, context=context, language=language, **kwargs)
     request = json.loads(context[len(MARKER):])

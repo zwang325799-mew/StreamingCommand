@@ -1,5 +1,6 @@
 """Consume the entire available causal prefix in one SDK generation per update."""
 def complete_update(original, model, audio, state):
+    """Temporarily resize the SDK chunk to consume all available causal PCM and verify sample coverage."""
     nominal = state.chunk_size_samples
     available = len(state.buffer) + len(audio)
     if available <= 0:

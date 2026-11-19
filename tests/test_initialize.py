@@ -8,6 +8,7 @@ from streamingcommand._runtime.selectable_commands import SelectableCommandParse
 
 
 def test_template_matches_shipped_endoscope_profile():
+    """Compare the template's inline candidates with the packaged endoscope defaults."""
     assets = files("streamingcommand").joinpath("assets")
     config = StreamingConfig.load(assets.joinpath("settings.json"))
     profile = assets.joinpath("config/candidate_profiles/endoscope-new.json")
@@ -18,6 +19,9 @@ def test_template_matches_shipped_endoscope_profile():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model", ["clarification-new", "clarification-latest"])
 async def test_initialize_uses_inline_candidates_for_parser_and_session(tmp_path, monkeypatch, model):
+    """Check that JSON candidates reach both text parsing and the audio session without requiring model
+    weights.
+    """
     pool = {"I": ["give", "stop"], "T": ["gauze", "grasper"], "P": []}
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({
@@ -27,9 +31,11 @@ async def test_initialize_uses_inline_candidates_for_parser_and_session(tmp_path
     }), encoding="utf-8")
 
     async def start_without_weights(self):
+        """Assert the parser was constructed with the configured candidate pool and skip model loading."""
         assert self.default_candidates == pool
 
     async def capture_request(self, operation, **kwargs):
+        """Echo the parser request fields so the test can inspect the effective candidate pool."""
         return kwargs
 
     monkeypatch.setattr(SelectableCommandParser, "start", start_without_weights)
@@ -52,6 +58,7 @@ async def test_initialize_uses_inline_candidates_for_parser_and_session(tmp_path
 
 @pytest.mark.asyncio
 async def test_asr_initialize_and_existing_config_inputs(tmp_path):
+    """Exercise the ASR-only initializer and verify that existing constructor config forms still work."""
     path = tmp_path / "settings.json"
     path.write_text('{"asr":{"backend":"fake"}}', encoding="utf-8-sig")
     asr = await StreamingASR.initialize(path)
@@ -68,6 +75,7 @@ async def test_asr_initialize_and_existing_config_inputs(tmp_path):
 
 
 def test_candidate_sources_and_invalid_pool():
+    """Reject conflicting candidate sources and empty-P pools outside the give/stop/reset contract."""
     with pytest.raises(ValueError, match="candidates_file"):
         CommandConfig(candidates={}, candidates_file="pool.json")
     with pytest.raises(ValueError, match="Empty P"):

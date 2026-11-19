@@ -3,6 +3,7 @@ from math import isfinite
 
 
 def make_bias(tokenizer, spec, whole_word_bias):
+    """Build a bounded token prior from a fixed vocabulary and explicitly allowed per-word overrides."""
     if set(spec) != {'context', 'words', 'weight', 'word_weights'}:
         raise ValueError('Invalid explicit ASR prior specification')
     weights = spec['word_weights']

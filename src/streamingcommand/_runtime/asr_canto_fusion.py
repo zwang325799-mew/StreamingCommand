@@ -9,6 +9,9 @@ PROFILES = ('control', 'fusion75')
 
 
 def policy(profile, **kwargs):
+    """Use the mix75 bank on long audio with strong current Cantonese evidence and preserve the fallback
+    policy otherwise.
+    """
     if profile not in PROFILES:
         raise ValueError(profile)
     if profile == 'control':
@@ -33,6 +36,7 @@ def policy(profile, **kwargs):
 
 
 def configure(asr, profile):
+    """Install the selected fusion policy and record the worker's boundary prior guard."""
     if profile not in PROFILES:
         raise ValueError(profile)
     configure_metadata(asr, 'control')

@@ -6,6 +6,9 @@ BOUNDARIES = (151645, 13, 11, 0, 30, 26, 25, 1773, 3837, 6313, 11319, 24968, 512
 
 
 def guarded_apply(original, processor, logits):
+    """Keep original logits for rows where a boundary token was already ranked first before applying a
+    prior.
+    """
     if not processor.biases:
         return original(processor, logits)
     import torch
@@ -19,6 +22,7 @@ def guarded_apply(original, processor, logits):
 
 
 def install():
+    """Install the vLLM boundary guard once and replace an existing narrower EOS-only guard."""
     from vllm.v1.sample.logits_processor.builtin import LogitBiasLogitsProcessor
     original = LogitBiasLogitsProcessor.apply
     if getattr(original, '_phono_boundary_prior_guard', False):
@@ -27,6 +31,7 @@ def install():
         original = inspect.getclosurevars(original).nonlocals['original']
 
     def apply(self, logits):
+        """Apply the boundary guard around the original vLLM bias operation."""
         return guarded_apply(original, self, logits)
 
     apply._phono_eos_prior_guard = True

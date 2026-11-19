@@ -40,7 +40,9 @@ def normalize_language_name(language: str) -> str:
     return s[:1].upper() + s[1:].lower()
 
 def detect_and_fix_repetitions(text, threshold=20):
+    """Collapse excessive character or repeated-pattern loops in decoded model output."""
     def fix_char_repeats(s, thresh):
+        """Reduce runs of the same character once the configured repetition threshold is reached."""
         res = []
         i = 0
         n = len(s)
@@ -58,6 +60,7 @@ def detect_and_fix_repetitions(text, threshold=20):
         return ''.join(res)
 
     def fix_pattern_repeats(s, thresh, max_len=20):
+        """Collapse contiguous repetitions of a short substring once they exceed the loop threshold."""
         n = len(s)
         min_repeat_chars = thresh * 2
         if n < min_repeat_chars:

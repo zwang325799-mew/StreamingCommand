@@ -5,6 +5,7 @@ original_bias = worker.whole_word_bias
 
 
 def bounded_domain_prior(tokenizer, words, weight):
+    """Allow the experiment's bounded uniform prior while reusing the original whole-word matcher."""
     weight = float(weight)
     if not 0 <= weight <= 6:
         raise ValueError('Experimental domain prior must be within [0, 6]')

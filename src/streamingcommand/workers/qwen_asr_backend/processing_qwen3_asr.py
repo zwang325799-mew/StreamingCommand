@@ -66,6 +66,7 @@ class Qwen3ASRProcessor(ProcessorMixin):
     feature_extractor_class = "WhisperFeatureExtractor"
     tokenizer_class = ("Qwen2Tokenizer", "Qwen2TokenizerFast")
 
+    # Register the feature extractor, tokenizer, and optional chat template with the processor mixin.
     def __init__(
         self, feature_extractor=None, tokenizer=None, chat_template=None
     ):
@@ -135,6 +136,7 @@ class Qwen3ASRProcessor(ProcessorMixin):
             tensor_type=kwargs.get("return_tensors"),
         )
 
+    # Expand each audio placeholder to match the encoded audio sequence length.
     def replace_multimodal_special_tokens(
         self,
         text,
@@ -177,6 +179,7 @@ class Qwen3ASRProcessor(ProcessorMixin):
                                 and end (exclusive) indices of a chunk in `token_indices`.
         """
 
+        # Yield index ranges segmented by successive token-value thresholds.
         def _iter():
             i, start_idx = 0, 0  # skip bos token
             current_chunk = 1
@@ -190,9 +193,11 @@ class Qwen3ASRProcessor(ProcessorMixin):
 
         return list(_iter())
 
+    # Delegate chat formatting to the inherited multimodal processor.
     def apply_chat_template(self, conversations, chat_template=None, **kwargs):
         return super().apply_chat_template(conversations, chat_template, **kwargs)
 
+    # Combine and deduplicate tokenizer and audio feature extractor input names.
     @property
     def model_input_names(self):
         tokenizer_input_names = self.tokenizer.model_input_names

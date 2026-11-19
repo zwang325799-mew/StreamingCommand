@@ -11,6 +11,7 @@ from asr_shared_weight_bank import WeightBankExtension
 
 
 def audit_prior_guard(self):
+    """Check on the active engine that an original EOS prediction survives a competing logit prior."""
     from vllm.v1.sample.logits_processor.builtin import LogitBiasLogitsProcessor
     return {'eos_prior_guard_installed': bool(getattr(LogitBiasLogitsProcessor.apply, '_phono_eos_prior_guard', False)),
             'eos_token_id': EOS_TOKEN_ID}
@@ -21,6 +22,7 @@ original_llm = worker.worker.Qwen3ASRModel.LLM
 
 
 def llm(cls, *args, **kwargs):
+    """Initialize the shared engine and verify that its EOS prior guard is active."""
     model = original_llm(*args, **kwargs)
     assert model.processor.tokenizer.eos_token_id == EOS_TOKEN_ID
     audits = model.model.collective_rpc('audit_prior_guard')

@@ -10,6 +10,7 @@ MAX_EXTENSION_SAMPLES = MARGIN_SAMPLES + HOP_SAMPLES
 
 
 def supported_margin_pcm(pcm):
+    """Normalize margins only when the source already has enough quiet samples to support the adjustment."""
     pcm = np.asarray(pcm)
     normalized, candidate = canonical_pcm(pcm, 160, 160)
     existing_quiet = (candidate.get('source_start', 0) + len(pcm) -

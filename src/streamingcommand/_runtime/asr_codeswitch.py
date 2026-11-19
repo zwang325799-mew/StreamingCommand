@@ -18,6 +18,7 @@ GLOSSARY = (
 
 
 def request_policy(profile, *, pcm, acoustic_hint, language, context):
+    """Select a short mixed-language request recipe from acoustic hints without inspecting generated text."""
     if profile not in PROFILES:
         raise ValueError(f'Unknown ASR ablation: {profile}')
     if profile == 'control' or language == 'English' or not 0 < len(pcm) <= 128000:

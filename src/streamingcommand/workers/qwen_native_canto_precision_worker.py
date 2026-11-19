@@ -13,6 +13,7 @@ original_make_bias=fusion.make_bias
 
 
 def make_bias(tokenizer,spec,whole_word_bias):
+    """Extend the inherited prior with bounded exact single-token Cantonese classifier weights."""
     if 'cjk_words' not in spec:return original_make_bias(tokenizer,spec,whole_word_bias)
     if set(spec)!={'context','words','weight','word_weights','cjk_words','cjk_weight'}:
         raise ValueError('Invalid explicit bilingual prior')

@@ -11,6 +11,7 @@ from .streaming import StreamingSession
 
 class YueEndpointCommitSession(StreamingSession):
     def __init__(self,*args,continuation_gap_ms=440,**kwargs):
+        """Validate the continuation window and track unpublished decode groups without adding a wait."""
         super().__init__(*args,**kwargs)
         if not self.endpoint_ms<=continuation_gap_ms<=1000:
             raise ValueError('Continuation gap must cover endpoint and be <=1000ms')
@@ -23,10 +24,12 @@ class YueEndpointCommitSession(StreamingSession):
         self.stats.update(endpoint_continuations=0,endpoint_provisional_decodes=0,endpoint_wait_added_ms=0)
 
     def _submit_final(self,reason):
+        """Mark silence-triggered finals as eligible for a later acoustic continuation."""
         super()._submit_final(reason)
         self._tentative=self._finals[-1] if reason=='vad_silence' else None
 
     def _resume(self,event):
+        """Link unpublished segments only when the gap, span, and already-completed Yue evidence qualify."""
         job,active=self._tentative,self._active
         if job is None or active is None or job.segment_id in self._finalized:
             return
@@ -56,6 +59,8 @@ class YueEndpointCommitSession(StreamingSession):
                          current_yue=yue,rolling_yue=recent,extra_queries=0))
 
     def _emit(self,event):
+        """Publish provisional components or assemble ordered original ASR texts into one final transcript.
+        """
         if event['type']=='speech.started':self._resume(event)
         if event['type']=='transcript.final':
             segment=event['segment_id']
@@ -98,6 +103,7 @@ class YueEndpointCommitSession(StreamingSession):
         super()._emit(event)
 
     async def _decode(self,job):
+        """Track the active physical decode while delegating generation to the normal scheduler."""
         self._decoding_job=job
         try:await super()._decode(job)
         finally:self._decoding_job=None

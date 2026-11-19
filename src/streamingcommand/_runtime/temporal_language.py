@@ -17,6 +17,7 @@ def repetition_signature(text):
 
 
 def history_agrees(history,minimum=2,reject_short_repetitions=False):
+    """Check whether recent hypotheses have the same repetition-normalized signature for prefix reuse."""
     if len(history)<minimum:return False
     selected=history[-minimum:]
     signatures=[repetition_signature(r['text']) for r in selected]
@@ -34,11 +35,14 @@ def history_agrees(history,minimum=2,reject_short_repetitions=False):
 
 class TemporalLanguage:
     def __init__(self, minimum_span_ms=200, maximum_gap_ms=1500):
+        """Set the acoustic span and recent-English lifetime used by the causal language policy."""
         self.minimum_span_ms=minimum_span_ms
         self.maximum_gap_ms=maximum_gap_ms
         self.last_english_end_ms=None
 
     def choose(self, pcm, current, rolling, start_ms, end_ms, *, speech_evidence=None):
+        """Choose an optional language condition from current, rolling, and still-recent acoustic evidence.
+        """
         span=acoustic_span(pcm)['active_span_ms']
         ct,cp=current.get('native_language_tag'),current.get('language_probability',0)
         rt,rp=rolling.get('native_language_tag'),rolling.get('language_probability',0)

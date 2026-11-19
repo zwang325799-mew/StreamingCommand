@@ -11,12 +11,15 @@ import numpy as np
 
 class NativeConsistentFeatureExtractor:
     def __init__(self, original):
+        """Wrap the existing feature extractor so its original configuration remains available."""
         self.original = original
 
     def __getattr__(self, name):
+        """Forward feature-extractor attributes that the wrapper does not implement."""
         return getattr(self.original, name)
 
     def __call__(self, audio, **kwargs):
+        """Hop-pad each mono clip independently, then batch the extracted features with matching masks."""
         import torch
         from transformers.feature_extraction_utils import BatchFeature
         clips = audio if isinstance(audio, (list, tuple)) else [audio]
@@ -48,6 +51,7 @@ class NativeConsistentFeatureExtractor:
 
 
 def install_native_consistent_features(processor):
+    """Install per-clip hop padding once on the supplied processor."""
     if not isinstance(processor.feature_extractor, NativeConsistentFeatureExtractor):
         processor.feature_extractor = NativeConsistentFeatureExtractor(processor.feature_extractor)
     return processor
@@ -78,7 +82,9 @@ def install_native_consistent_attention(model):
     if getattr(tower,'_native_block_masks_installed',False):return model
     cache={}
     def wrap(original,implementation):
+        """Bind an audio attention layer to its original method and configured attention implementation."""
         def forward(hidden_states,cu_seqlens,attention_mask=None,**kwargs):
+            """Supply a cached block mask to SDPA or eager attention for multiple acoustic blocks."""
             if attention_mask is None and implementation in ('sdpa','eager') and cu_seqlens.numel()>2:
                 key=(tuple(cu_seqlens.tolist()),str(hidden_states.device),hidden_states.dtype)
                 if cache.get('key')!=key:
@@ -110,6 +116,7 @@ def canonical_pcm(pcm, leading_ms=160, trailing_ms=160, threshold_dbfs=-75):
     result = np.pad(pcm[lo:hi], (front,tail))
     result = np.pad(result, (0,(-len(result))%160))
     def peak_db(a):
+        """Report the peak dBFS of a discarded PCM margin, or None for a silent margin."""
         peak = int(np.abs(a.astype(np.int32)).max()) if len(a) else 0
         return 20*np.log10(peak/32768) if peak else None
     return result, {'changed':True,'source_start':lo,'source_end':hi,

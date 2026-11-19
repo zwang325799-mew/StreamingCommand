@@ -76,6 +76,7 @@ async def decode_final(asr, segment_id, pcm, *, on_probe=None, should_retry=None
     samples = len(pcm) // 2
 
     def check_coverage(response):
+        """Compare the worker's processed sample count against the requested audio range."""
         if int(response.get("audio_processed_samples", samples)) != samples:
             raise AssertionError("Fresh final did not cover the complete received segment")
 

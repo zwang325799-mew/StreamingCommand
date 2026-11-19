@@ -29,6 +29,9 @@ from .asr_backend import WHISPER
 class AcousticLanguageHint:
     def __init__(self, device, model_dir=None, *, condition_english=False, int8=False,
                  minimum_language_probability=0.95,feature_dither=None):
+        """Configure a SenseVoice language-only helper and initialize its process, cache, and locking
+        state.
+        """
         self.device = device
         self.model_dir = Path(model_dir or model_path("language"))
         self._model = None
@@ -52,10 +55,12 @@ class AcousticLanguageHint:
 
     @property
     def is_loaded(self):
+        """Report readiness from the CPU worker handshake or the in-process model handle."""
         return self._model is not None or (self._cpu_ready and self._cpu_process is not None
                                           and self._cpu_process.returncode is None)
 
     async def _cpu_read(self, timeout):
+        """Read one timeout-bounded JSON line from the CPU helper and surface protocol errors."""
         line = await asyncio.wait_for(self._cpu_process.stdout.readline(), timeout)
         if not line:
             raise RuntimeError(f'CPU language worker exited; see {self.log_path}')
@@ -65,6 +70,7 @@ class AcousticLanguageHint:
         return result
 
     async def _start_cpu(self):
+        """Launch an isolated CPU language worker and wait for its ready message."""
         if self.is_loaded:
             return
         await self._close_cpu()
@@ -89,6 +95,7 @@ class AcousticLanguageHint:
         self._cpu_ready = True
 
     async def _close_cpu(self):
+        """Close the owned CPU worker's stdin and escalate only if it does not exit in time."""
         process, self._cpu_process = self._cpu_process, None
         self._cpu_ready = False
         if process is not None and process.returncode is None:
@@ -105,12 +112,14 @@ class AcousticLanguageHint:
             self._cpu_stderr.close();self._cpu_stderr = None
 
     async def _cpu_predict(self, pcm):
+        """Encode PCM16 for a single language query and return the worker's hint."""
         self._cpu_process.stdin.write((json.dumps({'op':'classify',
             'pcm16_b64':base64.b64encode(pcm).decode('ascii')})+'\n').encode())
         await self._cpu_process.stdin.drain()
         return (await self._cpu_read(15))['hint']
 
     def _load(self):
+        """Load, validate, and warm the SenseVoice helper with no auxiliary transcription models."""
         from funasr import AutoModel
         import torch
         self._torch = torch
@@ -134,6 +143,7 @@ class AcousticLanguageHint:
         original_projection = self._model.model.ctc.log_softmax
 
         def language_projection(encoded):
+            """Project only the first encoder position and retain its peak language probability."""
             probabilities = original_projection(encoded[:, :1, :])
             self._language_probability = math.exp(float(probabilities[0, 0].max().item()))
             return probabilities
@@ -142,12 +152,14 @@ class AcousticLanguageHint:
         self._predict(bytes(32000))  # Warm outside the measured audio session.
 
     def _frontend_options(self):
+        """Supply feature dither at FunASR construction so it survives frontend resets."""
         # Configure at construction: FunASR snapshots its immutable frontend
         # and restores that snapshot before every generate() call.
         return {} if self.feature_dither is None else {
             'frontend_conf':{'dither':float(self.feature_dither)}}
 
     def _configure_frontend(self):
+        """Verify the effective dither setting and retain it for language audit records."""
         frontend=self._model.kwargs['frontend']
         if self.feature_dither is not None:
             if getattr(frontend,'dither',None)!=float(self.feature_dither):
@@ -155,6 +167,7 @@ class AcousticLanguageHint:
         self._effective_feature_dither=getattr(frontend,'dither',None)
 
     async def start(self):
+        """Start the CPU worker or load the in-process helper on its dedicated executor."""
         async with self._lock:
             if self.device == 'cpu':
                 await self._start_cpu()
@@ -184,6 +197,7 @@ class AcousticLanguageHint:
                     raise
 
     def _predict(self, pcm):
+        """Compute only acoustic language evidence from PCM and apply the configured confidence threshold."""
         audio = np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768.0
         started = time.monotonic()
         with self._torch.inference_mode():
@@ -208,6 +222,7 @@ class AcousticLanguageHint:
                 'helper_words_used': False, 'device': self.device}
 
     async def classify(self, pcm):
+        """Serialize language requests and finish draining the inference before propagating cancellation."""
         async with self._lock:
             if not self.is_loaded:
                 raise RuntimeError('Language helper is not ready')
@@ -220,6 +235,7 @@ class AcousticLanguageHint:
                 raise
 
     async def close(self):
+        """Release the helper process or model and shut down its owned executor."""
         async with self._lock:
             await self._close_cpu()
             self._model = None

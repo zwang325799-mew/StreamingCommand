@@ -1,5 +1,11 @@
 # 验证范围
 
+## 2026-11-18 · Demo 通过公开 SDK 部署
+
+- 将 wheel 安装到临时目录，使用 `PHONO_STREAMINGCOMMAND_INSTALLED=1` 启动实际 `run.sh`。在 Linux CPU 上，默认 native ASR 和 step3003 经 WebSocket 处理英语 WAV，输出定稿 `bend down` 和可执行的 `bend / none / down`。服务端成功归档 WAV、事件和参数。
+- 独立文本解析返回同一动作，Kokoro 接口返回有效 WAV，模型接口切至 step936。另用 fake ASR 验证了包版、原版与包版之间的切换。
+- 测试复用了已校验的模型缓存和现有 Python 依赖。设备可见列表、启动期间关闭、与原版互斥的 ASR 锁另有 CPU 回归。该轮主要验证包的部署接口，实际推理使用 CPU。
+
 ## 2026-11-18 · 两份模型来源配置
 
 - 从 wheel 启动 `StreamingCommand`，在 Linux CPU 上分别载入本地 step936 和发布版 step4400。两份配置对同一个英语合成 WAV 都给出定稿 `bend down` 和可执行的 `bend / none / down`。两者直接解析天气闲聊时均返回 `NON_COMMAND`。

@@ -11,6 +11,7 @@ install()
 
 
 def audit_prior_guard(self):
+    """Check on the active engine that a logit prior cannot displace an original boundary winner."""
     from vllm.v1.sample.logits_processor.builtin import LogitBiasLogitsProcessor
     return {'eos_prior_guard_installed': bool(getattr(LogitBiasLogitsProcessor.apply, '_phono_eos_prior_guard', False)),
             'eos_token_id': 151645,
@@ -22,6 +23,7 @@ original_llm = Qwen3ASRModel.LLM
 
 
 def llm(cls, *args, **kwargs):
+    """Install the boundary guard on the engine path and verify it after model initialization."""
     model = original_llm(*args, **kwargs)
     tokenizer = model.processor.tokenizer
     expected = {tokenizer.eos_token_id}

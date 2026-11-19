@@ -9,14 +9,17 @@ SLOTS=("I","T","P")
 class QwenEncoder:
     """Compact causal layout: history/U before candidates, queries after all candidates."""
     def __init__(self, tokenizer, max_tokens=512):
+        """Record the tokenizer, pad token, and strict token budget for compact command inputs."""
         self.tokenizer, self.max_tokens = tokenizer, max_tokens
         self.pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
 
     @lru_cache(maxsize=100_000)
     def tokens(self, text):
+        """Cache token IDs for recurring prompt and candidate text without adding special tokens."""
         return tuple(self.tokenizer.encode(text, add_special_tokens=False))
 
     def encode(self, record):
+        """Build the causal command prompt and record candidate endpoints, query positions, and labels."""
         ids = list(self.tokens("Parse command using given candidates.\n"))
         for key, value in record["history"].items():
             ids.extend(self.tokens(key + "=" + value + "\n"))
@@ -45,6 +48,7 @@ class QwenEncoder:
         return {"record": record, "ids": ids, "positions": positions, "queries": queries, "labels": labels}
 
     def collate(self, examples):
+        """Pad token and candidate dimensions separately and produce masks for the ranker."""
         batch_size = len(examples)
         length = max(len(x["ids"]) for x in examples)
         k = max(len(p) for x in examples for p in x["positions"])
@@ -68,6 +72,7 @@ class QwenEncoder:
 
 class SharedCandidateHead(nn.Module):
     def __init__(self, hidden_size, bottleneck=128):
+        """Allocate the shared slot scorer, unresolved vectors, and binary command head."""
         super().__init__()
         self.slot_embedding = nn.Parameter(torch.zeros(3, hidden_size))
         self.unresolved = nn.Parameter(torch.empty(3, hidden_size))
@@ -77,6 +82,7 @@ class SharedCandidateHead(nn.Module):
         self.command_head = nn.Sequential(nn.LayerNorm(hidden_size), nn.Linear(hidden_size, 2))
 
     def forward(self, hidden, candidate_positions, candidate_mask, query_positions):
+        """Score valid candidate hidden states and the unresolved option against each slot query."""
         b, _, d = hidden.shape
         queries = hidden.gather(1, query_positions[..., None].expand(-1, -1, d)).float()
         flat_pos = candidate_positions.flatten(1)
@@ -91,16 +97,21 @@ class SharedCandidateHead(nn.Module):
 
 class QwenCandidateRanker(nn.Module):
     def __init__(self, language_model):
+        """Attach the shared candidate head to the provided Qwen language model."""
         super().__init__()
         self.language_model = language_model
         self.head = SharedCandidateHead(language_model.config.hidden_size)
 
     @property
     def backbone(self):
+        """Expose the underlying decoder for both plain and PEFT-wrapped language models."""
         lm = self.language_model
         return (lm.get_base_model() if hasattr(lm, "get_base_model") else lm).model
 
     def forward(self, input_ids, attention_mask, candidate_positions, candidate_mask, query_positions):
+        """Encode the prompt once and score commands and slots, using a capture-compatible mask for one-row
+        inference.
+        """
         if not self.training and input_ids.shape[0] == 1:
             # Transformers skips an all-valid SDPA mask in eager mode, but not
             # during CUDA capture. Supply the same explicit causal mask to both
@@ -115,6 +126,9 @@ class QwenCandidateRanker(nn.Module):
         return self.head(hidden, candidate_positions, candidate_mask, query_positions)
 
 def load_qwen(model_path, init_adapter=None, device="cuda:0", local_files_only=True):
+    """Load the local tokenizer and base model with the configured dtype and optionally merge an initial
+    adapter.
+    """
     from transformers import AutoTokenizer, Qwen3_5ForCausalLM
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=local_files_only)
     lm = Qwen3_5ForCausalLM.from_pretrained(model_path, dtype=torch.float16 if str(device).startswith("cuda:") else torch.float32,
@@ -131,6 +145,7 @@ def load_qwen(model_path, init_adapter=None, device="cuda:0", local_files_only=T
 class CudaGraphRunner:
     """One fixed input shape. All input tensors, including positions/masks, are copied on replay."""
     def __init__(self, model, batch):
+        """Warm up and capture a fixed-shape inference graph on the model's CUDA device."""
         self.static = {key: value.clone() for key, value in batch.items()}
         stream = torch.cuda.Stream(device=next(model.parameters()).device)
         stream.wait_stream(torch.cuda.current_stream())
@@ -143,6 +158,9 @@ class CudaGraphRunner:
             self.output = model(**self.static)
 
     def __call__(self, **batch):
+        """Copy each request tensor into static buffers and replay the captured graph after checking
+        shapes.
+        """
         for key, value in batch.items():
             if value.shape != self.static[key].shape:
                 raise ValueError("CUDA graph shape mismatch")
@@ -157,11 +175,15 @@ class SingleCommandGraphCache:
     For this notebook's single-threaded, batch-one inference only.
     """
     def __init__(self, model, max_shapes=16):
+        """Store a model and an eviction limit for exact-shape command graphs."""
         self.model, self.max_shapes = model, max_shapes
         self.runners = OrderedDict()
 
     @torch.inference_mode()
     def __call__(self, **batch):
+        """Reuse or capture a batch-one graph keyed by tensor shapes and dtypes, evicting the least recent
+        graph.
+        """
         if self.model.training or batch["input_ids"].shape[0] != 1:
             raise ValueError("Graph cache requires eval mode and one command")
         torch.cuda.set_device(next(self.model.parameters()).device)
@@ -174,6 +196,7 @@ class SingleCommandGraphCache:
         return self.runners[key](**batch)
 
 def restore_checkpoint(model, checkpoint, trainable=False):
+    """Restore the adapter and head, preserving trainable weights or merging the adapter for inference."""
     from peft import PeftModel
     from safetensors.torch import load_file
     checkpoint = Path(checkpoint)

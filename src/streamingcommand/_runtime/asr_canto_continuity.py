@@ -15,6 +15,7 @@ PROFILES = ('control', 'compact_no_history', 'compact_history',
 
 
 def prefix_plan(asr, profile, pcm, hint):
+    """Build a bounded previous-audio prefix from aligned recent samples and acoustic evidence."""
     if profile not in ('compact_history', 'classifier_history', 'phrases_history') or not 32000 < len(pcm) <= 80000:
         return None
     current = ((hint or {}).get('temporal_language_queries') or {}).get('current') or hint or {}
@@ -45,6 +46,7 @@ def prefix_plan(asr, profile, pcm, hint):
 
 
 def policy(asr, profile, **kwargs):
+    """Attach a qualifying audio prefix to the request recipe while retaining the selected ASR policy."""
     if profile == 'control':
         return None
     selected = eligibility('prior20', **kwargs)
@@ -65,6 +67,9 @@ def policy(asr, profile, **kwargs):
 
 
 def configure(asr, profile):
+    """Install the causal continuity policy and preserve the original request path for single-pass
+    decoding.
+    """
     if profile not in PROFILES:
         raise ValueError(profile)
     configure_metadata(asr, 'control')
@@ -73,6 +78,7 @@ def configure(asr, profile):
         original = asr._continuity.original_request
 
         async def request(op, **kwargs):
+            """Submit the prefixed waveform once and report coverage against the current segment."""
             helper = asr._continuity
             plan = None
             if op == 'transcribe' and helper.job is not None:

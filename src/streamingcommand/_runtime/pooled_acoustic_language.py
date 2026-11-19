@@ -10,6 +10,7 @@ from .acoustic_language import AcousticLanguageHint
 
 class PooledAcousticLanguageHint(AcousticLanguageHint):
     def __init__(self, *args, workers=2, cache_size=64, **kwargs):
+        """Create a bounded CPU worker pool and PCM cache for deterministic zero-dither language queries."""
         super().__init__(*args, **kwargs)
         if self.device != 'cpu' or self.feature_dither != 0.0:
             raise ValueError('Exact language reuse requires CPU inference with zero dither')
@@ -25,10 +26,12 @@ class PooledAcousticLanguageHint(AcousticLanguageHint):
         self.query_stats = dict(requests=0, computed=0, cache_hits=0, inflight_hits=0)
 
     def clear_cache(self):
+        """Clear PCM-derived hint records without resetting ASR history."""
         # Predictions contain only language evidence; ASR history is separate.
         self._cache.clear()
 
     async def start(self):
+        """Start each CPU peer and release the whole pool if any peer fails to initialize."""
         async with self._pool_lock:
             if self._available is not None:
                 return
@@ -50,6 +53,7 @@ class PooledAcousticLanguageHint(AcousticLanguageHint):
                 raise
 
     async def _compute(self, key, pcm):
+        """Borrow one worker, save a hint in the bounded cache, and return the worker even after failure."""
         worker = await self._available.get()
         try:
             if worker is self:
@@ -68,6 +72,9 @@ class PooledAcousticLanguageHint(AcousticLanguageHint):
             self._inflight.pop(key, None)
 
     async def classify(self, pcm):
+        """Reuse identical PCM requests and shield shared inference from an individual caller's
+        cancellation.
+        """
         if self._available is None:
             raise RuntimeError('Language pool is not ready')
         self.query_stats['requests'] += 1
@@ -94,6 +101,7 @@ class PooledAcousticLanguageHint(AcousticLanguageHint):
         return {**result, 'exact_pcm_cache_hit': False, 'shared_inflight_query': reused}
 
     async def _close_workers(self):
+        """Stop each owned language worker and reset pool availability and cache state."""
         for peer in self._peers:
             await peer.close()
         self._peers.clear()
@@ -102,6 +110,7 @@ class PooledAcousticLanguageHint(AcousticLanguageHint):
         self._cache.clear()
 
     async def close(self):
+        """Drain existing queries before shutting down the worker pool."""
         async with self._pool_lock:
             if self._inflight:
                 await asyncio.gather(*list(self._inflight.values()), return_exceptions=True)

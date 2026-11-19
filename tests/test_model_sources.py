@@ -10,6 +10,7 @@ from streamingcommand.resources import ModelStore
 
 
 def test_presets_declare_all_active_models():
+    """Verify source declarations and model identities in both shipped deployment presets."""
     folder = ASSETS / "presets"
     local = StreamingConfig.load(folder / "local-latest.json")
     assert local.command.model == "clarification-latest"
@@ -35,11 +36,13 @@ def test_presets_declare_all_active_models():
      "subfolder": "../model"},
 ])
 def test_invalid_sources(entry):
+    """Reject missing local paths and malformed Hugging Face URLs, revisions, or subfolders."""
     with pytest.raises(ValueError):
         StreamingConfig(models={"asr": entry})
 
 
 def test_relative_local_path_conflicts_and_missing_files(tmp_path, monkeypatch):
+    """Check config-relative paths, conflicting overrides, and missing resource errors."""
     directory = tmp_path / "models"
     directory.mkdir()
     path = tmp_path / "settings.json"
@@ -57,6 +60,7 @@ def test_relative_local_path_conflicts_and_missing_files(tmp_path, monkeypatch):
 
 
 def test_local_checkpoint_step_is_checked():
+    """Fail a local resource lookup when the checkpoint step differs from the configured value."""
     name = "clarification-latest"
     checkpoint = ASSETS / "models" / name
     store = ModelStore.from_config(StreamingConfig(models={
@@ -71,6 +75,7 @@ def test_local_checkpoint_step_is_checked():
 
 
 def test_explicit_source_takes_precedence_over_worker_model_path(tmp_path, monkeypatch):
+    """Ensure a config source overrides an existing worker resource path for the same model."""
     from streamingcommand._runtime import paths
 
     name = "clarification-new"
@@ -81,11 +86,13 @@ def test_explicit_source_takes_precedence_over_worker_model_path(tmp_path, monke
 
 
 def test_custom_snapshot_uses_configured_revision_and_subfolder(tmp_path, monkeypatch):
+    """Check the repo, pinned revision, offline mode, and subfolder supplied to custom snapshot downloads."""
     import huggingface_hub
 
     calls = []
 
     def snapshot_download(**kwargs):
+        """Record the Hugging Face request and return a temporary checkout for path resolution."""
         calls.append(kwargs)
         snapshot = tmp_path / kwargs["revision"]
         (snapshot / "vad").mkdir(parents=True)
@@ -103,10 +110,14 @@ def test_custom_snapshot_uses_configured_revision_and_subfolder(tmp_path, monkey
 
 
 def test_release_cli_shows_model_without_loading_and_downloads_active_resources(tmp_path, monkeypatch, capsys):
+    """Verify that CLI diagnostics display the release sources and download selects just the active
+    resources.
+    """
     path = ASSETS / "presets" / "huggingface-release.json"
     calls = []
 
     def ensure(store, name):
+        """Record a requested resource and return a test path without performing downloads."""
         calls.append((name, store.source(name)))
         return tmp_path / name
 
@@ -125,6 +136,9 @@ def test_release_cli_shows_model_without_loading_and_downloads_active_resources(
     (0, 1, "NON_COMMAND"), (1, 0, "UNRESOLVED"), (1, 1, "EXECUTE"),
 ])
 def test_release_decodes_noncommand_unresolved_and_business_none(command, target, status):
+    """Check that the release runtime distinguishes a non-command, unresolved slots, and an explicit none
+    candidate.
+    """
     import torch
     from streamingcommand._runtime.llm_ranker import QwenEncoder
     from streamingcommand._runtime.published_command_runtime import PublishedCommandRuntime
@@ -133,6 +147,7 @@ def test_release_decodes_noncommand_unresolved_and_business_none(command, target
         pad_token_id = 1
 
         def encode(self, text, add_special_tokens=False):
+            """Return a deterministic stand-in token for any text passed to the fixture tokenizer."""
             return [1]
 
     runtime = PublishedCommandRuntime.__new__(PublishedCommandRuntime)
@@ -140,6 +155,7 @@ def test_release_decodes_noncommand_unresolved_and_business_none(command, target
     runtime.encoder = QwenEncoder(Tokenizer())
 
     def forward(**kwargs):
+        """Return controlled command and slot logits to exercise release decoding without real weights."""
         return {"command": torch.tensor([[1 - command, command]]),
                 "slots": torch.tensor([[[0, 1], [1 - target, target], [0, 1]]])}
 

@@ -11,28 +11,35 @@ from streamingcommand._runtime.acoustic_vad import AcousticGateConfig,AcousticGa
 from streamingcommand._runtime.streaming import StreamingSession,make_vad
 
 class AlwaysSpeech:
+    # Force a positive base VAD vote to isolate the energy gate in tests.
     def is_speech(self,frame,sample_rate):return True
 
 def tone(dbfs, samples=320):
+    """Synthesize a 500 Hz PCM16 frame at the requested RMS level."""
     peak=32768*10**(dbfs/20)*math.sqrt(2)
     return b''.join(struct.pack('<h',round(peak*math.sin(2*math.pi*500*i/16000))) for i in range(samples))
 
 class Capture(StreamingSession):
     def __init__(self,vad):
+        """Run the real framing logic with a supplied VAD and capture outputs without starting a model."""
         super().__init__(None,None,vad=vad)
         self.final_pcm=[]
         self.events=[]
+    # Collect the VAD and segmentation events synchronously for assertions.
     def _emit(self,e):self.events.append(e)
     def _submit(self,kind):
+        """Capture the exact active waveform presented for a final decode."""
         if kind=='final':self.final_pcm.append(bytes(self._active['pcm']))
 
 def feed_frames(session,audio):
+    """Feed frame-aligned audio while retaining the valid length of the padded final frame."""
     for offset in range(0,len(audio),640):
         frame=audio[offset:offset+640]
         session._frame(frame+bytes(640-len(frame)),len(frame)//2)
 
 
 def test_dc_removed_energy_and_pcm16_floor():
+    """Check silence, DC rejection, and calibrated RMS measurement at two levels."""
     assert rms_dbfs(bytes(640))==-100
     assert rms_dbfs(struct.pack('<h',12345)*320)==-100
     assert abs(rms_dbfs(tone(-60))+60)<0.4
@@ -40,6 +47,9 @@ def test_dc_removed_energy_and_pcm16_floor():
 
 
 def test_causal_gate_rejects_steady_vad_false_positive_then_accepts_quiet_speech():
+    """Verify that calibrated quiet noise is rejected even with a positive base VAD and active speech
+    preserves the noise floor.
+    """
     gate=AcousticGateVAD(AlwaysSpeech())
     noise=tone(-68)
     for _ in range(100):
@@ -56,6 +66,7 @@ def test_causal_gate_rejects_steady_vad_false_positive_then_accepts_quiet_speech
 
 
 def test_hysteresis_continuation_and_preroll_preserve_complete_soft_tail():
+    """Verify that pre-roll and endpoint framing retain the quiet tail byte for byte."""
     gate=AcousticGateVAD(AlwaysSpeech())
     s=Capture(gate)
     noise=tone(-68);quiet_tail=tone(-65)
@@ -76,6 +87,7 @@ def test_hysteresis_continuation_and_preroll_preserve_complete_soft_tail():
 
 
 def test_one_frame_impulse_cannot_use_vad_overhang_to_create_a_segment():
+    """Require a lone high-energy frame to remain below the onset confirmation requirement."""
     s=Capture(AcousticGateVAD(AlwaysSpeech()))
     noise=tone(-68)
     feed_frames(s,noise*100+tone(-25)+noise*100)
@@ -84,6 +96,7 @@ def test_one_frame_impulse_cannot_use_vad_overhang_to_create_a_segment():
 
 
 def test_live_default_is_safe2s_and_baseline_can_be_injected():
+    """Check the default gate settings and prove that an injected WebRTC baseline remains available."""
     default=StreamingSession(None,None)
     assert isinstance(default.vad,AcousticGateVAD)
     assert default.vad.config==AcousticGateConfig(continuation_uses_raw_vad=True,
@@ -99,6 +112,9 @@ def test_live_default_is_safe2s_and_baseline_can_be_injected():
 
 
 def test_uncalibrated_safe_onset_does_not_wait_or_reject_immediate_weak_voice():
+    """Verify that a weak initial utterance starts at the ordinary confirmation window before noise
+    calibration.
+    """
     config=AcousticGateConfig(continuation_uses_raw_vad=True,
                              passthrough_before_calibration=True,
                              minimum_noise_frames=100)

@@ -20,6 +20,7 @@ MAX_TEXT_CHARS = 500
 
 
 def validate_logic(value, backend=None):
+    """Require a recognized policy and a supported H1 clarification model for paired parsing."""
     if value not in {o['id'] for o in LOGIC_OPTIONS}:
         raise ValueError('Unknown recognition_logic')
     if value == 'semantic-pair' and (backend is None or
@@ -29,6 +30,7 @@ def validate_logic(value, backend=None):
 
 
 def executable(result):
+    """Check that a resolved result permits action and has no pending clarification."""
     return bool(result.get('execute') and result.get('resolved') and
                 not result.get('clarification_required'))
 
@@ -50,28 +52,34 @@ def select_pair(current, joined):
 
 class PairedCommandSession(CommandSession):
     def __init__(self, *args, **kwargs):
+        """Initialize the command scheduler with one optional predecessor for paired parsing."""
         super().__init__(*args, **kwargs)
         self._previous_unexecuted = None
 
     def submit(self, event):
+        """Invalidate a predecessor when an empty final or a pending clarification makes pairing unsafe."""
         if event['type'] == 'transcript.final' and (not event['text'].strip() or self._pending_clarification):
             self._previous_unexecuted = None
         super().submit(event)
 
     def configure(self, candidates):
+        """Apply the candidate update and discard a predecessor interpreted under the previous pool."""
         result = super().configure(candidates)
         self._previous_unexecuted = None
         return result
 
     async def clear_memory(self):
+        """Clear the clarification state and forget the saved predecessor."""
         await super().clear_memory()
         self._previous_unexecuted = None
 
     async def feedback(self, *args):
+        """Forget the predecessor before sending a clarification reply."""
         self._previous_unexecuted = None
         return await super().feedback(*args)
 
     def _prediction_ready(self, event, result, final):
+        """Invalidate pairing state after skipped, reply, or error finals are processed."""
         # Empty/feedback finals bypass _parse_command. Invalidate when processed
         # as well as submitted: an earlier in-flight A may have filled the cache.
         if final and (result.get('skipped_reason') or result.get('clarification_reply_source')
@@ -79,6 +87,9 @@ class PairedCommandSession(CommandSession):
             self._previous_unexecuted = None
 
     def _prefix(self, event, job, history):
+        """Return the eligible predecessor only when audio timing, text, and session state fit the pairing
+        limits.
+        """
         previous = self._previous_unexecuted
         if not previous or self._pending_clarification or self._reply_bindings.get(event['segment_id']):
             return None
@@ -100,6 +111,7 @@ class PairedCommandSession(CommandSession):
         return previous
 
     async def _parse_command(self, event, job, history, final):
+        """Compare B and eligible A+B under the same history and commit at most one model result."""
         if not final:
             return await super()._parse_command(event, job, history, final)
         previous = self._prefix(event, job, history)

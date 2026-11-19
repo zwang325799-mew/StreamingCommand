@@ -14,6 +14,7 @@ PROFILES = ('control', 'verbs_glossary40', 'verbs_glossary60', 'verbs_legacy40',
 
 
 def policy(profile, **kwargs):
+    """Apply balanced action-word priors without separately biasing direction tokens."""
     if profile not in PROFILES:
         raise ValueError(profile)
     if profile == 'control':
@@ -34,6 +35,7 @@ def policy(profile, **kwargs):
 
 
 def configure(asr, profile):
+    """Install the uniform verb-prior policy on the shared ASR worker."""
     # Install truthful weight-bank metadata with the existing control adapter.
     configure_base(asr, 'control')
     if profile not in PROFILES:

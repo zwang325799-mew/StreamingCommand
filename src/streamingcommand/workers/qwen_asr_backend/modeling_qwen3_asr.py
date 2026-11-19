@@ -57,6 +57,7 @@ class Qwen3ASRTextRMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
 
+    # Compute RMS normalization in float32 and cast back to the input dtype before applying learned scale.
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
@@ -64,6 +65,7 @@ class Qwen3ASRTextRMSNorm(nn.Module):
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
         return self.weight * hidden_states.to(input_dtype)
 
+    # Show the RMS normalization weight shape and epsilon in module displays.
     def extra_repr(self):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
@@ -87,6 +89,7 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
+# Repeat grouped keys and values, apply a mask, and return scaled attention output and weights.
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -143,6 +146,7 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
 class Qwen3ASRTextAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
+    # Configure grouped text attention with query/key normalization and learned projections.
     def __init__(self, config: Qwen3ASRConfig, layer_idx: int):
         super().__init__()
         self.config = config
@@ -172,6 +176,7 @@ class Qwen3ASRTextAttention(nn.Module):
             self.head_dim, eps=config.rms_norm_eps
         )  # thus post q_norm does not need reshape
 
+    # Project text states, apply rotary positions and optional KV updates, then dispatch attention.
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
@@ -218,6 +223,7 @@ class Qwen3ASRTextAttention(nn.Module):
 
 
 class Qwen3ASRTextMLP(nn.Module):
+    # Allocate the gate, up, and down projections for the text feed-forward block.
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -228,12 +234,14 @@ class Qwen3ASRTextMLP(nn.Module):
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[config.hidden_act]
 
+    # Multiply the activated gate by the up projection before projecting back to hidden size.
     def forward(self, x):
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
 
 
 class Qwen3ASRThinkerTextDecoderLayer(GradientCheckpointingLayer):
+    # Construct the residual decoder layer with attention, gated MLP, and two RMS normalizers.
     def __init__(self, config: Qwen3ASRConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -244,6 +252,7 @@ class Qwen3ASRThinkerTextDecoderLayer(GradientCheckpointingLayer):
         self.input_layernorm = Qwen3ASRTextRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = Qwen3ASRTextRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
+    # Apply normalized self-attention and the MLP with residual connections.
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
@@ -398,6 +407,7 @@ class Qwen3ASRPreTrainedModelForConditionalGeneration(Qwen3ASRPreTrainedModel):
                                 and end (exclusive) indices of a chunk in `token_indices`.
         """
 
+        # Yield ranges of sorted token positions that fall within successive fixed-size chunks.
         def _iter():
             i, start_idx = 0, 0  # skip bos token
             current_chunk = 1
@@ -451,6 +461,7 @@ class Qwen3ASRPreTrainedModelForConditionalGeneration(Qwen3ASRPreTrainedModel):
 class Qwen3ASRAudioAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
+    # Initialize the audio attention projections and per-head scale for the configured encoder size.
     def __init__(self, config):
         super().__init__()
         self.embed_dim = config.d_model
@@ -521,6 +532,7 @@ class Qwen3ASRAudioAttention(nn.Module):
 
 
 class Qwen3ASRAudioEncoderLayer(GradientCheckpointingLayer):
+    # Combine audio self-attention, layer normalization, and the feed-forward sublayer.
     def __init__(self, config: Qwen3ASRAudioEncoderConfig):
         super().__init__()
         self.embed_dim = config.d_model
@@ -577,6 +589,7 @@ class Qwen3ASRAudioEncoderLayer(GradientCheckpointingLayer):
 
 
 class SinusoidsPositionEmbedding(nn.Module):
+    # Precompute sinusoidal position vectors and register them as a nonpersistent buffer.
     def __init__(self, length, channels, max_timescale=10000):
         super().__init__()
         if channels % 2 != 0:
@@ -590,6 +603,7 @@ class SinusoidsPositionEmbedding(nn.Module):
             persistent=False,
         )
 
+    # Return the sinusoidal embedding slice for the requested sequence length.
     def forward(self, seqlen: int):
         return self.positional_embedding[:seqlen, :]
 
@@ -606,6 +620,7 @@ class Qwen3ASRAudioEncoder(Qwen3ASRPreTrainedModel):
     _no_split_modules = ["Qwen3ASRAudioEncoderLayer"]
     _supports_sdpa = True
 
+    # Build the convolutional frontend, acoustic transformer layers, and output projections.
     def __init__(self, config: Qwen3ASRAudioEncoderConfig):
         super().__init__(config)
         self.dropout = config.dropout
@@ -635,17 +650,21 @@ class Qwen3ASRAudioEncoder(Qwen3ASRPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
+    # Disable gradients for the audio tower and mark it as frozen.
     def _freeze_parameters(self):
         for param in self.parameters():
             param.requires_grad = False
         self._requires_grad = False
 
+    # Expose the first convolution as the audio encoder's input embedding module.
     def get_input_embeddings(self) -> nn.Module:
         return self.conv1
 
+    # Replace the first convolution used for audio input embeddings.
     def set_input_embeddings(self, value: nn.Module):
         self.conv1 = value
 
+    # Mask tokens that belong to different packed audio chunks for non-flash attention.
     def _prepare_attention_mask(self, inputs_tensor: torch.Tensor, cu_seqlens: torch.Tensor) -> torch.Tensor:
         # Flash Attention 2 doesn't need a 4D mask and relies on `cu_seqlens/max_seqlen`
         # NOTE: the created attention masl only approximates the ragged FA2 attention by
@@ -781,6 +800,7 @@ class Qwen3ASRAudioEncoder(Qwen3ASRPreTrainedModel):
 class Qwen3ASRThinkerTextRotaryEmbedding(nn.Module):
     inv_freq: torch.Tensor  # fix linting for `register_buffer`
 
+    # Initialize multi-axis rotary frequencies and record the interleaving configuration.
     def __init__(self, config: Qwen3ASRConfig, device=None):
         super().__init__()
         if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
@@ -800,6 +820,7 @@ class Qwen3ASRThinkerTextRotaryEmbedding(nn.Module):
 
         self.mrope_section = config.rope_scaling.get("mrope_section", [24, 20, 20])
 
+    # Compute default inverse frequencies from the rotary base and attention head dimension.
     @staticmethod
     def compute_default_rope_parameters(config, device=None, **kwargs):
         # Transformers 5 moved the default implementation out of ROPE_INIT_FUNCTIONS.
@@ -826,6 +847,7 @@ class Qwen3ASRThinkerTextRotaryEmbedding(nn.Module):
             freqs_t[..., idx] = freqs[dim, ..., idx]
         return freqs_t
 
+    # Build cosine and sine tensors for the supplied temporal and spatial position IDs.
     @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
     def forward(self, x, position_ids):
@@ -848,6 +870,7 @@ class Qwen3ASRThinkerTextRotaryEmbedding(nn.Module):
 
 
 class Qwen3ASRThinkerTextMLP(nn.Module):
+    # Allocate the thinker's gated MLP projections with the optional intermediate dimension.
     def __init__(self, config, intermediate_size=None):
         super().__init__()
         self.config = config
@@ -858,6 +881,7 @@ class Qwen3ASRThinkerTextMLP(nn.Module):
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[config.hidden_act]
 
+    # Combine the activated gate with the up projection and project to the decoder width.
     def forward(self, x):
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
@@ -873,6 +897,7 @@ class Qwen3ASRThinkerTextRMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
 
+    # Normalize the thinker hidden states in float32 and return the original dtype.
     def forward(self, hidden_states):
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
@@ -880,6 +905,7 @@ class Qwen3ASRThinkerTextRMSNorm(nn.Module):
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
         return self.weight * hidden_states.to(input_dtype)
 
+    # Show the thinker's RMS weight shape and numerical epsilon.
     def extra_repr(self):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
@@ -887,6 +913,7 @@ class Qwen3ASRThinkerTextRMSNorm(nn.Module):
 class Qwen3ASRThinkerTextAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
+    # Allocate the thinker's grouped attention projections and per-head RMS normalization.
     def __init__(self, config, layer_idx):
         super().__init__()
         self.config = config
@@ -917,6 +944,7 @@ class Qwen3ASRThinkerTextAttention(nn.Module):
         )  # thus post q_norm does not need reshape
         self.sliding_window = None
 
+    # Apply rotary positions, update any KV cache, and run thinker self-attention.
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
@@ -977,6 +1005,7 @@ class Qwen3ASRThinkerTextModel(Qwen3ASRPreTrainedModel):
         "attentions": Qwen3ASRThinkerTextAttention,
     }
 
+    # Build thinker text embeddings, decoder layers, final RMS normalization, and rotary embeddings.
     def __init__(self, config: Qwen3ASRConfig):
         super().__init__(config)
         self.padding_idx = getattr(config, "pad_token_id", None)
@@ -993,6 +1022,7 @@ class Qwen3ASRThinkerTextModel(Qwen3ASRPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
+    # Run the thinker decoder over text embeddings with positions and optional cached attention state.
     @check_model_inputs
     @auto_docstring
     def forward(
@@ -1086,6 +1116,7 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
         "attentions": Qwen3ASRThinkerTextAttention,
     }
 
+    # Compose the audio tower, text decoder, and language-model output head.
     def __init__(self, config):
         super().__init__(config)
         self.audio_tower = Qwen3ASRAudioEncoder._from_config(config.audio_config)
@@ -1100,9 +1131,11 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
         self.rope_deltas = None
         self.post_init()
 
+    # Return the text decoder's token embeddings through the conditional-generation wrapper.
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
 
+    # Replace token embeddings in the underlying text decoder.
     def set_input_embeddings(self, value):
         self.model.set_input_embeddings(value)
 
@@ -1265,6 +1298,7 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
             rope_deltas=self.rope_deltas,
         )
 
+    # Prepare the next generation step and avoid re-encoding audio after prefill.
     def prepare_inputs_for_generation(
         self,
         input_ids,
@@ -1330,6 +1364,7 @@ class Qwen3ASRThinkerTextPreTrainedModel(PreTrainedModel):
 class Qwen3ASRForConditionalGeneration(Qwen3ASRPreTrainedModel, GenerationMixin):
     config_class = Qwen3ASRConfig
 
+    # Create the top-level ASR generation wrapper around the configured thinker model.
     def __init__(self, config: Qwen3ASRConfig):
         super().__init__(config)
         self.config = config
@@ -1337,9 +1372,11 @@ class Qwen3ASRForConditionalGeneration(Qwen3ASRPreTrainedModel, GenerationMixin)
         self.thinker = Qwen3ASRThinkerForConditionalGeneration._from_config(config.thinker_config)
         self.post_init()
     
+    # Return the checkpoint's language support metadata.
     def get_support_languages(self):
         return self.config.support_languages
 
+    # Route top-level generation arguments and inputs to the thinker model.
     @torch.no_grad()
     def generate(
         self,

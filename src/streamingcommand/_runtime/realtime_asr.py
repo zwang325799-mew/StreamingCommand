@@ -12,9 +12,11 @@ from .asr_profiles import ASR_PROFILE_VERSIONS
 
 
 def realtime_asr_class(base_class):
+    """Add early partials and a CPU acoustic-language helper to the supplied ASR backend."""
     # Avoid importing the profile factory from a class it constructs.
     class RealtimeV15ASR(base_class):
         def __init__(self, *args, **kwargs):
+            """Configure early partial scheduling, tail decoding, and the resident language helper."""
             defaults = dict(context=default_context(),
                             worker=worker_path("qwen_native_complete_prefix_worker.py"))
             super().__init__(*args, **{**defaults, **kwargs})
@@ -44,6 +46,7 @@ def realtime_asr_class(base_class):
                 worker=str(self.worker))
 
         async def start(self):
+            """Warm the backend and language helper as one readiness unit, cleaning up on failure."""
             async with self._repair_start_lock:
                 if (self.status.get('ready') and self._process is not None
                         and self._process.returncode is None
@@ -61,12 +64,15 @@ def realtime_asr_class(base_class):
                     raise
 
         async def request(self, op, **kwargs):
+            """Supply the preferred rollback length and default prefix reuse for final transcribe requests.
+            """
             if op == 'transcribe':
                 kwargs.setdefault('reuse_stream_prefix',True)
                 kwargs['final_prefix_tokens']=getattr(self,'final_prefix_tokens',5)
             return await super().request(op, **kwargs)
 
         async def close(self):
+            """Release the ASR worker and then its CPU language helper even when ASR cleanup raises."""
             try:
                 await super().close()
             finally:

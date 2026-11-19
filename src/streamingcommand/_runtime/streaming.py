@@ -25,6 +25,7 @@ DEFAULT_PARTIAL_QUIET_MS = 40
 
 
 def make_vad(mode=2):
+    """Create the WebRTC VAD used for PCM16 speech decisions."""
     if mode not in (0, 1, 2, 3):
         raise ValueError("WebRTC VAD mode must be 0, 1, 2 or 3")
     module = importlib.import_module("webrtcvad")
@@ -48,6 +49,7 @@ class StreamingSession:
     def __init__(self, asr, emit_async, interval_ms=800, endpoint_ms=240, *, vad=None,
                  max_segment_ms=8000, partial_quiet_ms=DEFAULT_PARTIAL_QUIET_MS,
                  first_partial_ms=None):
+        """Initialize the streaming scheduler, VAD framing, decode queues, and per-segment revision state."""
         if interval_ms < 20 or endpoint_ms < 20 or max_segment_ms < interval_ms:
             raise ValueError("Intervals must be >=20ms and max segment >= ASR interval")
         self.asr, self.emit_async = asr, emit_async
@@ -95,15 +97,18 @@ class StreamingSession:
         self.stats['partials_deferred_for_compute'] = 0
 
     def _identity(self):
+        """Read the ASR backend and fake status for outgoing event metadata."""
         status = getattr(self.asr, "status", {})
         return {"backend": status.get("backend", getattr(self.asr, "backend", "unknown")),
                 "is_fake": status.get("is_fake", getattr(self.asr, "is_fake", False))}
 
     def _emit(self, event):
+        """Enqueue an event unless the session is closed or its publisher has failed."""
         if not self._closed and self._emit_error is None:
             self._outgoing.put_nowait({**self._identity(), **event})
 
     async def _publish(self):
+        """Deliver events in order, attach final latency, and record downstream publishing failures."""
         try:
             while True:
                 event = await self._outgoing.get()
@@ -124,6 +129,9 @@ class StreamingSession:
                 self._outgoing.task_done()
 
     async def start(self):
+        """Ensure the ASR backend is ready, reset audio-session state, and start decoding and publishing
+        tasks.
+        """
         if self._started:
             return
         if self._closed:
@@ -136,6 +144,7 @@ class StreamingSession:
         self._worker = asyncio.create_task(self._infer())
 
     async def feed(self, pcm16_bytes):
+        """Buffer received PCM, frame it for VAD, and propagate earlier decode or publish errors."""
         if not self._started or self._finishing or self._closed:
             raise RuntimeError("Session is not accepting audio")
         if self._error is not None:
@@ -155,6 +164,9 @@ class StreamingSession:
         # No model or network await: the audio receive loop remains independent.
 
     def _frame(self, frame, valid_samples):
+        """Update pre-roll and speech state, triggering coalesced partials or a final at configured
+        boundaries.
+        """
         start = self._cursor
         self._cursor += valid_samples
         end = self._cursor
@@ -237,6 +249,7 @@ class StreamingSession:
                         active["next_partial"] += self.interval_samples
 
     def _submit(self, kind):
+        """Freeze active PCM and timing as a decode job and coalesce superseded partials."""
         active = self._active
         pcm = bytes(active["pcm"])
         job = _Job(kind, active["id"], pcm, active["start"], self._cursor,
@@ -259,6 +272,7 @@ class StreamingSession:
         self._wake.set()
 
     def _submit_final(self, reason):
+        """Queue the active segment's final and release its segmentation state."""
         active = self._active
         self._emit({"type": "speech.stopped", "segment_id": active["id"],
                     "audio_start_ms": active["start"] * 1000 / SAMPLE_RATE,
@@ -271,6 +285,7 @@ class StreamingSession:
         self._flags.clear()
 
     async def _decode(self, job):
+        """Send one audio job to the backend and emit a revision with coverage and generation metadata."""
         started = time.monotonic()
         queued_ms = (started - job.enqueued) * 1000
         final = job.kind == "final"
@@ -287,6 +302,9 @@ class StreamingSession:
             # Updating its remaining buffer first would decode the same audio
             # twice and could delay an otherwise short final by seconds.
             async def publish_probe(response):
+                """Emit diagnostic information for a backend probe without treating it as a transcript
+                revision.
+                """
                 self._emit({"type": "asr.language_probe", "segment_id": job.segment_id,
                             "requested_language": initial_language,
                             "audio_start_ms": job.start_sample * 1000 / SAMPLE_RATE,
@@ -301,6 +319,9 @@ class StreamingSession:
                 self.stats['language_prefetch_reused'] += 1
             custom_decoder=getattr(self.asr,'decode_final',None)
             async def final_decoder(*args,**kwargs):
+                """Run the backend's profile-specific final decoder with the current segment's sample
+                range.
+                """
                 if custom_decoder is not None:
                     return await custom_decoder(*args,start_sample=job.start_sample,
                                                 end_sample=job.end_sample,**kwargs)
@@ -416,6 +437,7 @@ class StreamingSession:
                     "pending_partial_requests": int(self._partial is not None)})
 
     async def _infer(self):
+        """Drain decode jobs with priority for finals and notify waiters when work is idle."""
         try:
             while not self._closing:
                 if self._finals:
@@ -449,6 +471,7 @@ class StreamingSession:
             self._idle.set()
 
     async def finish(self):
+        """Flush the remaining PCM, wait for queued finals, and drain the event publisher."""
         if self._closed:
             return
         if not self._started:
@@ -468,6 +491,7 @@ class StreamingSession:
             raise RuntimeError("Transcript delivery failed") from self._emit_error
 
     async def close(self):
+        """Stop the session tasks and language prefetches while leaving the shared model available."""
         if self._closed:
             return
         self._closed = self._closing = True

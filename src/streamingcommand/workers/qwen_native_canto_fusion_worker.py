@@ -18,6 +18,7 @@ cache = {}
 
 
 def transcribe(self, audio, context='', language=None, **kwargs):
+    """Decode one waveform with temporary mixed-language vocabulary priors and restore sampling options."""
     if not context.startswith(original.MARKER):
         return original.original_transcribe(self, audio=audio, context=context, language=language, **kwargs)
     spec = json.loads(context[len(original.MARKER):])

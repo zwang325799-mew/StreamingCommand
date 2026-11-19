@@ -25,10 +25,12 @@ async def build_backends(config: StreamingConfig):
         from ._runtime import acoustic_speech
         acoustic_speech.MODEL_DIR = resources["speech"]
         from ._runtime.asr_defaults import build_asr
-        device, _ = resolve_device(spec.device)
+        device, expected_uuid = resolve_device(spec.device)
         if spec.backend.startswith("vllm") and not device.startswith("cuda:"):
             raise ValueError("vLLM requires a compatible NVIDIA CUDA device; select native for CPU")
         asr = build_asr(spec.profile, device=device)
+        asr._instance_lease.compatibility_lock_file = (
+            Path(spec.compatibility_lock_file) if spec.compatibility_lock_file else None)
         if hasattr(asr, "_continuity_asr") and not asr.status.get("asr_engine_count") == 1:
             from ._runtime.shared_asr import configure_shared_engine
             configure_shared_engine(asr)
@@ -44,7 +46,7 @@ async def build_backends(config: StreamingConfig):
             asr.worker = paths.WORKERS / "portable_worker.py"
             asr.worker_environment.update(STREAMINGCOMMAND_ASR_BACKEND=spec.backend)
         asr.warmup = spec.warmup
-        asr.gpu_uuid = spec.expected_gpu_uuid or ""
+        asr.gpu_uuid = spec.expected_gpu_uuid or expected_uuid
         asr.status.update(device=device, backend=spec.backend, model_dir=str(asr.model_dir), implementation="streamingcommand")
         asr.status["model_sources"] = {name: {**store.source(name), "resolved_path": str(path)}
                                        for name, path in resources.items()}
@@ -58,7 +60,7 @@ async def build_backends(config: StreamingConfig):
         from ._runtime.selectable_commands import SelectableCommandParser
         command = SelectableCommandParser(model=llm.model, device=llm.device,
             python=llm.python, base_model_dir=str(base), candidates_file=llm.candidates_file,
-            candidates=llm.candidates,
+            candidates=llm.candidates, candidate_profiles_dir=llm.candidate_profiles_dir,
             checkpoint_overrides={llm.model: checkpoint},
             checkpoint_sources={llm.model: store.source(llm.model)},
             use_cuda_graphs=llm.use_cuda_graphs, logs_root=config.logs_dir, expected_gpu_uuid=llm.expected_gpu_uuid)

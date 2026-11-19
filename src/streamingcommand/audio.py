@@ -21,6 +21,7 @@ async def microphone(device=None, *, sample_rate=None, block_ms=20, queue_second
     stopping = False
 
     def enqueue(pcm, status):
+        """Transfer one microphone block to the async queue and record overflow for the consumer."""
         nonlocal failure
         if stopping:
             return
@@ -32,6 +33,7 @@ async def microphone(device=None, *, sample_rate=None, block_ms=20, queue_second
             failure = AudioOverflowError("Microphone consumer is too slow; audio continuity was lost")
 
     def callback(data, frames, timing, status):
+        """Copy a PortAudio input block before passing it from the audio thread to the event loop."""
         loop.call_soon_threadsafe(enqueue, bytes(data), status)
 
     stream = sd.RawInputStream(samplerate=sample_rate, channels=1, dtype="int16", device=device,

@@ -13,6 +13,9 @@ from ..config import PUBLISHED_MODEL
 
 
 def main():
+    """Pin the worker's device and serve serialized load, parse, feedback, and cleanup operations over JSON
+    lines.
+    """
     expected = device_policy.pin_device()
     runtime = None
     protocol = sys.stdout
@@ -24,9 +27,10 @@ def main():
                 if operation == 'load':
                     import torch
                     torch.set_num_threads(4)
-                    if expected and device_policy.DEVICE.startswith('cuda:'):
-                        actual = str(torch.cuda.get_device_properties(0).uuid).lower().removeprefix('gpu-')
-                        if actual != expected.lower().removeprefix('gpu-'):
+                    actual_uuid = None
+                    if device_policy.DEVICE.startswith('cuda:'):
+                        actual_uuid = str(torch.cuda.get_device_properties(0).uuid)
+                        if expected and actual_uuid.lower().removeprefix('gpu-') != expected.lower().removeprefix('gpu-'):
                             raise RuntimeError('GPU UUID mismatch')
                     if request["model"] == PUBLISHED_MODEL:
                         from .published_command_runtime import PublishedCommandRuntime
@@ -38,7 +42,7 @@ def main():
                             base_model_dir=request.get('base_model_dir'), use_cuda_graphs=request.get('use_cuda_graphs', True))
                     runtime.warmup(request['candidates'])
                     result = {**runtime.identity, 'model_id': request['model'], 'device': device_policy.DEVICE,
-                               'device_uuid': expected, 'backbones': 1, 'adapters': 1,
+                               'device_uuid': actual_uuid, 'backbones': 1, 'adapters': 1,
                                'adapter_merged': request["model"] == PUBLISHED_MODEL}
                 elif operation == 'close':
                     result = {}

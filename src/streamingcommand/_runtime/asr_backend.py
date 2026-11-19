@@ -21,10 +21,10 @@ import wave
 import numpy as np
 
 if __package__:
-    from .device_policy import resolve_device
+    from .device_policy import resolve_device, worker_visibility
     from .asr_instance import ASRInstanceLease
 else:
-    from device_policy import resolve_device
+    from device_policy import resolve_device, worker_visibility
     from asr_instance import ASRInstanceLease
 
 from .paths import ASSETS, WORKERS, CACHE, LOGS, model_path, worker_path
@@ -34,10 +34,12 @@ WORKSPACE = CACHE
 WHISPER = CACHE
 
 def default_context():
+    """Read the bundled ASR context text using its declared UTF-8 encoding."""
     return (ASSETS / "context.txt").read_text(encoding="utf-8")
 
 
 def encode_pcm16(pcm: bytes) -> str:
+    """Convert whole little-endian PCM16 samples into base64-encoded float32 worker input."""
     if len(pcm) % 2:
         raise ValueError("PCM16 must contain a whole number of 16-bit samples")
     audio = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
@@ -58,6 +60,8 @@ class NativeASR:
                  max_new_tokens=96, warmup=True,
                  retry_out_of_domain_language=False, reuse_streaming_language=False,
                  word_bias_weight=0.0, word_bias_words=(), minimum_streaming_hint_ms=1600):
+        """Configure interpreter, model, generation options, and ownership state without starting a worker.
+        """
         if device != "auto" and device != "cpu" and not re.fullmatch(r"cuda:\d+", device):
             raise ValueError("Native Qwen requires a device such as cuda:1")
         self.device, self.gpu_uuid = resolve_device(device)
@@ -116,10 +120,12 @@ class NativeASR:
         self._instance_lease = ASRInstanceLease(self.device)
 
     def _phase(self, phase, error=None):
+        """Update the worker's phase, loading flag, readiness, and diagnostic error together."""
         self.status.update(phase=phase, state=phase, loading=phase in {"loading", "warming"},
                            ready=phase == "ready", error=error)
 
     async def _read(self, timeout):
+        """Read a bounded JSON reply and surface invalid output, worker exit, or a reported failure."""
         assert self._process is not None
         line = await asyncio.wait_for(self._process.stdout.readline(), timeout)
         if not line:
@@ -134,6 +140,7 @@ class NativeASR:
         return response
 
     async def start(self):
+        """Acquire the ASR lease, start the isolated worker, and warm it before advertising readiness."""
         async with self._start_lock:
             if self.status["ready"] and self._process is not None and self._process.returncode is None:
                 return self.status.get("worker_ready", dict(self.status))
@@ -151,14 +158,13 @@ class NativeASR:
                 log_path = self.logs_dir / f"qwen-{stamp}-{os.getpid()}.log"
                 self.status["log_path"] = str(log_path)
                 self._stderr = log_path.open("wb")
-                # This installed vLLM maps logical devices using int(CVD).
-                # Keep its physical index numeric; UUID pinning remains valid
-                # for the separate PyTorch LLM worker.
                 environment = {**os.environ, **self.worker_environment}
-                environment.update(CUDA_VISIBLE_DEVICES=self.device.split(":")[-1] if self.device.startswith("cuda:") else "",
+                visible = worker_visibility(self.device, os.environ)
+                if self.status.get("backend") == "vllm" and not visible.isdecimal():
+                    raise ValueError("Legacy vLLM requires a numeric CUDA_VISIBLE_DEVICES selector")
+                environment.update(CUDA_VISIBLE_DEVICES=visible,
                                    PHONO_ASR_GPU_UUID=self.gpu_uuid,
-                                   STREAMINGCOMMAND_DEVICE=self.device,
-                                   CUDA_DEVICE_ORDER='PCI_BUS_ID')
+                                   STREAMINGCOMMAND_DEVICE=self.device)
                 environment.pop("PYTHONPATH", None)
                 memory_arguments = ([] if self.kv_cache_memory_bytes is None else
                                     ['--kv-cache-memory-bytes', str(self.kv_cache_memory_bytes)])
@@ -177,6 +183,7 @@ class NativeASR:
                 if ready.get("event") != "ready":
                     raise RuntimeError("Qwen worker did not send its ready event")
                 self.status["worker_ready"] = ready
+                self.status["device_uuid"] = ready.get("device_uuid")
                 if self.warmup:
                     self._phase("warming")
                     audio_path = ASSETS / "warmup.wav"
@@ -197,6 +204,7 @@ class NativeASR:
                 raise
 
     async def _exchange(self, payload):
+        """Send one request and verify that the reply matches its operation and segment."""
         assert self._process is not None
         self._process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode())
         await self._process.stdin.drain()
@@ -208,6 +216,7 @@ class NativeASR:
         return result
 
     async def request(self, op, **kwargs):
+        """Serialize worker requests and finish consuming an in-flight reply when its caller is cancelled."""
         if op == "transcribe" and kwargs.get("language") == "English" and self.word_bias_weight:
             kwargs['word_bias'] = {'weight': self.word_bias_weight, 'words': list(self.word_bias_words)}
         async with self._request_lock:
@@ -233,6 +242,7 @@ class NativeASR:
                 raise
 
     async def _terminate_owned_process(self):
+        """Stop the worker or its owned process group, close the log, and release the ASR lease."""
         process = self._process
         if process is not None:
             # start_new_session makes this group exclusive to our worker and
@@ -256,6 +266,7 @@ class NativeASR:
         self._instance_lease.release()
 
     async def close(self):
+        """Attempt graceful protocol shutdown before enforcing cleanup of the owned worker."""
         async with self._close_lock:
             self._closing = True
             try:
@@ -275,6 +286,7 @@ class FakeASR:
     backend, is_fake = "fake", True
 
     def __init__(self, *, latency_ms=20, text="[FAKE] 模拟转写，未运行 Qwen"):
+        """Set the transcript and delay used by the lightweight ASR protocol double."""
         self.context, self.language = "", "English"
         self.latency_ms, self.text = latency_ms, text
         self.status = {"backend": "fake", "is_fake": True, "phase": "idle", "state": "idle",
@@ -282,10 +294,12 @@ class FakeASR:
         self._samples = 0
 
     async def start(self):
+        """Mark the ASR protocol double ready without loading weights."""
         self.status.update(phase="ready", state="ready", ready=True)
         return {"event": "ready", "ok": True, "backend": "fake", "is_fake": True}
 
     async def request(self, op, **kwargs):
+        """Simulate the streaming protocol, including received sample counts and the configured text."""
         await asyncio.sleep(self.latency_ms / 1000)
         if op == "start":
             self._samples = 0
@@ -300,4 +314,5 @@ class FakeASR:
                 "generations": [], "decode_ms": self.latency_ms}
 
     async def close(self):
+        """Mark the ASR protocol double closed without managing any external process."""
         self.status.update(phase="closed", state="closed", ready=False)

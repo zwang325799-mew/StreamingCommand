@@ -19,6 +19,9 @@ from .command_models import (ROOT, SINGLE_MODEL, H1_MODELS, SINGLE_MODELS,
 
 class SingleCommandRuntime:
     def __init__(self, checkpoint=SINGLE_CLARIFICATION_CHECKPOINT, *, model_id=SINGLE_MODEL, predictor=None, base_model_dir=None, use_cuda_graphs=True):
+        """Verify checkpoint files and load the selected unmerged adapter, command head, and clarification
+        head.
+        """
         self.checkpoint = Path(checkpoint).resolve()
         self.model_id = model_id
         if model_id not in SINGLE_MODELS:
@@ -57,6 +60,9 @@ class SingleCommandRuntime:
         self.predictor = predictor
 
     def _predict(self, text, candidates, history, pending):
+        """Encode a turn with its current clarification stage and decode both proposals from one model
+        output.
+        """
         torch = self.core.torch
         row = dict(id="demo", utterance=text, candidates=candidates, history=history,
                    clarification_input=pending, command="N", slots=dict.fromkeys("ITP"),
@@ -77,6 +83,7 @@ class SingleCommandRuntime:
             return self.core.decode(out, [row], include_scores=True)[0]
 
     def warmup(self, candidates):
+        """Exercise empty and populated history and clarification shapes before serving live turns."""
         histories = ({}, {"H1": "I=bend;T=none;P=left"},
                      {"H2": "I=bend;T=none;P=left", "H1": "I=rotate;T=none;P=right"})
         for history in histories:
@@ -87,10 +94,12 @@ class SingleCommandRuntime:
         self.clear()
 
     def clear(self):
+        """Forget the current pending clarification and its reply token."""
         self.pending = None
         self.clarification_id = None
 
     def _run(self, text, candidates, history, pending):
+        """Normalize one prediction for the streaming protocol, including its empty-P execution rules."""
         started = time.perf_counter()
         result = self.predictor(text, candidates, history, pending)
         if not candidates["P"]:
@@ -107,6 +116,7 @@ class SingleCommandRuntime:
         scores = result.get("scores", {})
         slots = result["slots"]
         def rendered(slot):
+            """Format an unresolved slot or disabled field for the diagnostic raw output."""
             if slots[slot] is not None:
                 return slots[slot]
             inactive = not candidates["P"] and (slot == "P" or (slot == "T" and slots["I"] in ("stop", "reset")))
@@ -124,6 +134,7 @@ class SingleCommandRuntime:
                 "is_fake": False, "parse_ms": elapsed, "model_ms": elapsed}
 
     def _commit(self, result, candidates, history):
+        """Keep or clear the pending clarification and issue a fresh token for the next reply."""
         if result["next_clarification_input"]:
             # A rejected/chat reply keeps the earlier question, without changing
             # C=N into an execution or a new semantic model decision.
@@ -135,6 +146,7 @@ class SingleCommandRuntime:
             self.clear()
 
     def parse_turn(self, utterance, candidates, history, *, session_id=None, commit=False):
+        """Evaluate one text turn and mutate the active session only when the request commits."""
         candidates = model_candidates(candidates, self.model_id)
         history = model_history(history, self.model_id)
         # Stateless requests and ASR previews never mutate a recording's state.
@@ -151,6 +163,7 @@ class SingleCommandRuntime:
         return result
 
     def parse_pair(self, utterance, previous, candidates, history, *, session_id):
+        """Compare the current and adjacent-context interpretations using one frozen history snapshot."""
         from .semantic_pair import select_pair
         if self.model_id not in H1_MODELS:
             raise ValueError('Paired parsing requires an H1 model')
@@ -185,6 +198,7 @@ class SingleCommandRuntime:
         return result
 
     def feedback(self, session_id, reply, clarification_id):
+        """Resolve a matching clarification token against the session's saved candidates and history."""
         if (session_id != self.session_id or not self.pending or
                 not clarification_id or clarification_id != self.clarification_id):
             raise ValueError("澄清已过期；请回答当前问题")

@@ -9,8 +9,10 @@ from .acoustic_speech import AcousticSpeechEvidence
 
 
 def temporal_stream_asr_class(base_class):
+    """Compose a temporal backend with pooled language evidence and an optional speech-evidence helper."""
     class TemporalStreamASR(base_class):
         def __init__(self,*args,enable_speech_evidence=False,**kwargs):
+            """Configure bounded rolling language queries and the optional Silero speech evidence path."""
             super().__init__(*args,**kwargs)
             self._acoustic_language=PooledAcousticLanguageHint('cpu',condition_english=True,
                 int8=True,feature_dither=0.0,workers=2,cache_size=64)
@@ -45,10 +47,14 @@ def temporal_stream_asr_class(base_class):
                 'pair_queries':'parallel_same_audio_and_same_model'}
 
         def begin_audio_session(self):
+            """Reset parent streaming state and discard language hints cached for the preceding recording."""
             super().begin_audio_session()
             self._acoustic_language.clear_cache()
 
         async def start(self):
+            """Start the base ASR profile and warm its optional speech-evidence helper before reporting
+            readiness.
+            """
             try:
                 ready=await super().start()
                 if self._speech_evidence is not None:
@@ -61,11 +67,13 @@ def temporal_stream_asr_class(base_class):
                 raise
 
         async def close(self):
+            """Close the optional speech helper and release the underlying ASR profile."""
             try:
                 if self._speech_evidence is not None:await self._speech_evidence.close()
             finally:await super().close()
 
         async def decode_partial(self,segment_id,pcm,*,start_sample,end_sample):
+            """Allow a short causal preview only when recent English hypotheses and audio evidence agree."""
             if len(pcm)>64000:return None
             helper=self._continuity
             previous=helper.history[-2:]

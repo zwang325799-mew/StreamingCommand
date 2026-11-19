@@ -6,8 +6,10 @@ from .temporal_language import TemporalLanguage
 
 
 def temporal_asr_class(base_class):
+    """Extend the continuity backend with current and rolling acoustic language evidence."""
     class TemporalASR(base_class):
         def __init__(self,*args,**kwargs):
+            """Set up the temporal language policy and configure the predecessor audio constraints."""
             super().__init__(*args,**kwargs)
             self._temporal_language=TemporalLanguage()
             self.language_rolling_samples=40000
@@ -26,10 +28,12 @@ def temporal_asr_class(base_class):
                 history_policy='two_actual_matching_hypotheses_before_prefix_reuse')
 
         def begin_audio_session(self):
+            """Reset temporal language state alongside the base profile's waveform history."""
             super().begin_audio_session()
             self._temporal_language=TemporalLanguage()
 
         async def acoustic_language_for_window(self,raw,*,start_sample,end_sample):
+            """Evaluate current and rolling audio windows and return their causal language hints."""
             # Snapshot at submission: only the specified received samples enter
             # the query, even when a large feed packet contains newer audio.
             helper=self._continuity
@@ -61,6 +65,9 @@ def temporal_asr_class(base_class):
 
         async def decode_final(self,segment_id,pcm,*,start_sample,end_sample,
                                prefetched_acoustic_hint=None,**kwargs):
+            """Select a language condition from acoustic evidence and carry its audit record into final
+            decoding.
+            """
             hint=prefetched_acoustic_hint
             if hint is None or 'temporal_language_queries' not in hint:
                 hint=await self.acoustic_language_for_window(pcm,start_sample=start_sample,end_sample=end_sample)

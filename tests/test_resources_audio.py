@@ -9,6 +9,7 @@ from streamingcommand.resources import ModelStore, sha256
 
 @pytest.mark.asyncio
 async def test_resampling_preserves_duration_across_blocks(tmp_path):
+    """Check that asynchronous file resampling keeps the full duration across small blocks."""
     import soundfile as sf
     rate = 44100
     audio = np.sin(np.arange(rate * 2) * 2 * np.pi * 440 / rate).astype(np.float32) * .2
@@ -21,12 +22,14 @@ async def test_resampling_preserves_duration_across_blocks(tmp_path):
 
 
 def test_offline_rejects_corrupt_resources(tmp_path):
+    """Require a valid local cache when the model store runs in offline mode."""
     store = ModelStore(tmp_path, offline=True)
     with pytest.raises(FileNotFoundError, match="Offline"):
         store.ensure("asr")
 
 
 def test_packaged_adapters_are_complete_and_verified():
+    """Check that both bundled command checkpoints contain their required verified files."""
     store = ModelStore(offline=True)
     for name in ("clarification-new", "clarification-latest"):
         path = store.ensure(name)
@@ -35,6 +38,7 @@ def test_packaged_adapters_are_complete_and_verified():
 
 
 def test_config_paths_and_unknown_fields(tmp_path):
+    """Resolve relative paths against the config directory and reject unknown top-level fields."""
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({"asr": {"model_dir": "models/asr"}, "command": {"candidates_file": "scrub.json"}}))
     config = StreamingConfig.load(path)

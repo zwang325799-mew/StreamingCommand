@@ -12,6 +12,9 @@ from .command_backend import validate_candidates, validate_history
 
 class CommandSession:
     def __init__(self, backend, emit, candidates, history=None):
+        """Create the revision-aware command queue and initialize candidate, history, and clarification
+        state.
+        """
         self.backend, self.emit = backend, emit
         self.candidates = getattr(backend, "prepare_candidates", validate_candidates)(candidates)
         self.history = getattr(backend, "prepare_history", validate_history)(history)
@@ -30,12 +33,16 @@ class CommandSession:
         self._task = asyncio.create_task(self._worker())
 
     def configure(self, candidates):
+        """Validate a new candidate pool and invalidate outstanding clarifications tied to the previous
+        revision.
+        """
         self.candidates = getattr(self.backend, "prepare_candidates", validate_candidates)(candidates)
         self.candidate_version += 1
         self._pending_clarification = None
         return {"candidates": copy.deepcopy(self.candidates), "candidate_version": self.candidate_version}
 
     def submit(self, event):
+        """Queue an immutable candidate snapshot for a transcript or transfer a provisional reply binding."""
         if self._closed:
             return
         segment = event["segment_id"]
@@ -70,6 +77,7 @@ class CommandSession:
         self._wake.set()
 
     def _bind_reply(self, segment, text):
+        """Bind at most one nonempty transcript segment to the pending clarification ID."""
         pending = self._pending_clarification
         if pending is not None and text.strip() and not self._feedback_in_progress:
             token = pending["clarification_id"]
@@ -77,15 +85,20 @@ class CommandSession:
                 self._reply_bindings.setdefault(segment, token)
 
     async def _parse_command(self, event, job, history, final):
+        """Dispatch a turn using a session-aware backend when available and commit only final transcripts."""
         if hasattr(self.backend, "parse_turn"):
             return await self.backend.parse_turn(event["text"], job["candidates"], history,
                 session_id=self.session_id, commit=final)
         return await self.backend.parse(event["text"], job["candidates"], history)
 
     def _prediction_ready(self, event, result, final):
+        """Provide an extension point for policies that track each accepted prediction."""
         pass
 
     async def _worker(self):
+        """Prioritize finals, discard stale previews, and publish predictions with history and
+        clarification updates.
+        """
         try:
             while not self._closed:
                 if self._finals:
@@ -159,6 +172,7 @@ class CommandSession:
             self._idle.set()
 
     def _update_history(self, result):
+        """Serialize resolved slots into H1 and retain H2 only when the backend permits it."""
         if result.get("resolved"):
             if self.backend.status.get("max_history_depth", 2) == 1:
                 self.history.pop("H2", None)
@@ -167,6 +181,7 @@ class CommandSession:
             self.history["H1"] = ";".join(f"{s}={result['slots'][s] if result['slots'][s] is not None else ''}" for s in ("I", "T", "P"))
 
     async def feedback(self, reply, clarification_id):
+        """Drain queued turns before validating and applying a text reply to the current clarification."""
         await self.finish()
         async with self._operation_lock:
             pending = self._pending_clarification
@@ -192,6 +207,7 @@ class CommandSession:
                              "transcript_to_result_ms": result.get("parse_ms", 0)})
 
     async def clear_memory(self):
+        """Drain queued turns, clear backend clarification state, and notify the event consumer."""
         await self.finish()
         async with self._operation_lock:
             if hasattr(self.backend, "clear_memory"):
@@ -200,11 +216,15 @@ class CommandSession:
             await self.emit({"type": "command.memory_cleared", "memory_active": False})
 
     async def finish(self):
+        """Wait for queued command work to drain and propagate an ended worker's error."""
         await self._idle.wait()
         if self._task.done():
             await self._task
 
     async def close(self):
+        """Discard queued turns, drain any active request, and release the backend's state for this
+        session.
+        """
         self._closed = True
         self._finals.clear()
         self._partials.clear()

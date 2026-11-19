@@ -12,6 +12,7 @@ _overrides = json.loads(os.environ.get("STREAMINGCOMMAND_MODELS", "{}"))
 
 
 def model_path(name):
+    """Choose an override, packaged resource, or user cache directory in that order."""
     if name in _overrides:
         return Path(_overrides[name])
     packaged = ASSETS / "models" / name
@@ -19,10 +20,12 @@ def model_path(name):
 
 
 def worker_path(name):
+    """Locate an ASR worker script relative to the installed package."""
     return WORKERS / name
 
 
 def candidate_root():
+    """Install absent candidate defaults into the user directory under a file lock."""
     from filelock import FileLock
     import shutil
     directory = Path(os.environ.get("STREAMINGCOMMAND_CONFIG", user_config_path("StreamingCommand")))

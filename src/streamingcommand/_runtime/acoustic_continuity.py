@@ -11,6 +11,7 @@ class CausalContinuity:
     future audio, second ASR pass, or generated-text editing is used.
     """
     def __init__(self, backend, count=2, minimum_active_span_ms=0):
+        """Retain the backend's original hooks and attach a bounded recent-audio and hypothesis history."""
         self.backend = backend
         self.count = count
         self.maximum_history = count
@@ -33,12 +34,14 @@ class CausalContinuity:
         backend.acoustic_language_for_final = self.classify
 
     def reset(self):
+        """Clear buffered PCM, absolute sample offsets, and recent hypotheses at a session boundary."""
         self.timeline.clear()
         self.timeline_start = 0
         self.history.clear()
         self.job = self.hint = None
 
     def observe(self, raw):
+        """Append received PCM and retain at most 32 seconds while keeping absolute sample positions."""
         self.timeline.extend(raw)
         # 32 s covers a 16 s queued final and the bounded 6 s audio context.
         trim = len(self.timeline) - 32*32000
@@ -47,18 +50,21 @@ class CausalContinuity:
             del self.timeline[:trim]
 
     async def classify(self, raw):
+        """Delegate acoustic language classification to the backend's original helper."""
         hint = await self.original_classifier(raw)
         # Non-prefetched requests execute in the final's serialized decode.
         # A prefetched hint is explicitly bound to its job by ReplaySession.
         return hint
 
     def current_eligible(self, raw):
+        """Check whether a short current segment meets the active speech-span threshold."""
         if len(raw)>64000:return False
         if not self.minimum_active_span_ms:return True
         from .acoustic_span import acoustic_span
         return acoustic_span(raw)['active_span_ms']>=self.minimum_active_span_ms
 
     def previous_eligible(self,record):
+        """Allow a recent English hypothesis only when its text and waveform fit the prefix constraints."""
         if not record['text'] or record['language']!='English' or record['samples']>self.maximum_previous_samples:
             return False
         if self.require_long_history_repetition and record['samples']>32000:
@@ -72,6 +78,9 @@ class CausalContinuity:
         return True
 
     async def request(self, op, **kwargs):
+        """Supply one aligned audio prefix when eligible, then report coverage for the current segment
+        alone.
+        """
         job = self.job if op == 'transcribe' else None
         if job is None:
             return await self.original_request(op, **kwargs)

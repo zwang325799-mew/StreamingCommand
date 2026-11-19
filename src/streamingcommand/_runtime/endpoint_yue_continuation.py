@@ -4,6 +4,7 @@ from .endpoint_continuation import EndpointContinuationSession
 
 class YueEndpointContinuationSession(EndpointContinuationSession):
     def _resume(self, event):
+        """Permit continuation only with completed Yue evidence already available for the tentative final."""
         job = self._tentative
         task = getattr(job, 'language_prefetch', None)
         # Reuse only a completed query already requested by the ordinary ASR

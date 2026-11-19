@@ -9,6 +9,7 @@ from .device_policy import DEFAULT_DEVICE
 
 class V15ASR(NativeASR):
     def __init__(self, *args, **kwargs):
+        """Set the V15 worker defaults and expose its supported-margin finalization policy."""
         defaults = dict(
             model_dir=model_path("asr"),
             worker=worker_path("qwen_native_supported_margins_v3_worker.py"),
@@ -26,6 +27,7 @@ class V15ASR(NativeASR):
 
 
 def build_asr(profile=DEFAULT_ASR_PROFILE, *, device=DEFAULT_DEVICE):
+    """Compose the requested ASR profile without loading models or starting a worker."""
     if profile == 'v17-yue-precision':
         from .asr_yue_precision import configure
         asr = build_asr('v15-canto-commit', device=device)
@@ -81,5 +83,6 @@ def build_asr(profile=DEFAULT_ASR_PROFILE, *, device=DEFAULT_DEVICE):
 
 
 def segment_limit_ms(profile):
+    """Return the supported maximum segment length for the requested ASR profile."""
     return 16000 if profile in ('v17-yue-precision', 'v15-canto-commit', 'v15', 'v15-realtime', 'v15-continuity', 'v15-temporal', 'v15-temporal-stream','v15-speech-aware','v15-speech-aware-dual') else 8000
 

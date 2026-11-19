@@ -11,6 +11,7 @@ import torch
 
 class DecodeGraph:
     def __init__(self,thinker,capacity):
+        """Allocate fixed decode buffers and capture one token step against the static KV cache."""
         from transformers.cache_utils import StaticCache
         self.thinker=thinker;self.capacity=capacity
         device=next(thinker.parameters()).device
@@ -28,6 +29,7 @@ class DecodeGraph:
         torch.cuda.synchronize(device)
 
     def _step(self):
+        """Decode one buffered token and write the next-token prediction into persistent storage."""
         # Explicit mask avoids data-dependent mask construction and prevents
         # reading stale values outside this request's valid prefix.
         dtype=next(self.thinker.parameters()).dtype
@@ -41,6 +43,7 @@ class DecodeGraph:
 
     @torch.inference_mode()
     def begin(self,prefill,first_token,delta):
+        """Initialize static graph state from the current prefill cache, first token, and RoPE delta."""
         length=prefill.get_seq_length()
         if length>=self.capacity:raise ValueError('Static decoder capacity exceeded')
         for target,source in zip(self.cache.layers,prefill.layers):
@@ -50,12 +53,14 @@ class DecodeGraph:
         self.delta.copy_(delta)
 
     def step(self):
+        """Replay one decode step and return its persistent token buffer."""
         self.graph.replay()
         return self.token
 
 
 class GreedyAccelerator:
     def __init__(self,model,mode='graph',capacity=1024):
+        """Store the thinker model, decoding mode, and static cache capacity."""
         if mode not in ('greedy','graph'):raise ValueError(mode)
         self.model=model;self.mode=mode;self.capacity=capacity;self.graph=None
         self.warmup_seconds=0.;self.calls=0;self.fallbacks=0;self.last_timing={}
@@ -63,15 +68,20 @@ class GreedyAccelerator:
 
     @torch.inference_mode()
     def warmup(self):
+        """Capture a fixed-capacity token decode graph once when graph mode is enabled."""
         if self.mode=='graph' and self.graph is None:
             started=time.perf_counter();self.graph=DecodeGraph(self.model.thinker,self.capacity)
             self.warmup_seconds=time.perf_counter()-started
 
     @torch.inference_mode()
     def generate(self,inputs,max_new_tokens):
+        """Run request generation in inference mode using the configured decoding path."""
         with self._lock:return self._generate(inputs,max_new_tokens)
 
     def _generate(self,inputs,max_new_tokens):
+        """Prefill the multimodal input, then decode tokens until the configured stop or capacity
+        condition.
+        """
         if max_new_tokens<1:raise ValueError('max_new_tokens must be positive')
         if inputs['input_ids'].shape[0]!=1:raise ValueError('ASR graph requires batch size one')
         thinker=self.model.thinker

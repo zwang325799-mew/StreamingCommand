@@ -15,6 +15,7 @@ PROFILES = ('control', 'domain_auto', 'prior05', 'prior10', 'prior20', 'prior30'
 
 
 def policy(profile, *, pcm, acoustic_hint, language, context):
+    """Build a fixed bilingual vocabulary prior only when current or rolling evidence supports Cantonese."""
     if profile not in PROFILES:
         raise ValueError(profile)
     if profile == 'control' or language == 'English' or not 0 < len(pcm) <= 128000:
@@ -46,6 +47,7 @@ def policy(profile, *, pcm, acoustic_hint, language, context):
 
 
 def configure(asr, profile):
+    """Install the vocabulary prior policy and its ASR worker for the selected experiment."""
     if asr.status.get('asr_engine_count') != 1:
         raise ValueError('A single shared ASR engine is required')
     if profile not in PROFILES:

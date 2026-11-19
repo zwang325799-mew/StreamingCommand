@@ -5,6 +5,9 @@ from .llm_ranker import QwenEncoder,QwenCandidateRanker
 SLOTS="ITP"
 class ClarificationEncoder(QwenEncoder):
     def encode(self,record):
+        """Append clarification and second-choice queries to the compact prompt without truncating its
+        input.
+        """
         # False is the original compact prompt. The only new input is this short stage flag.
         working=dict(record)
         if record.get('clarification_input',False):
@@ -23,6 +26,9 @@ class ClarificationEncoder(QwenEncoder):
 
 class UnifiedModel(QwenCandidateRanker):
     def __init__(self,parser):
+        """Reuse the original backbone and candidate head while initializing a separate clarification flag
+        head.
+        """
         nn.Module.__init__(self)
         self.language_model=parser.language_model
         self.head=parser.head
@@ -32,6 +38,9 @@ class UnifiedModel(QwenCandidateRanker):
         with torch.no_grad():self.clarify_head[-1].bias.copy_(torch.tensor([2.,-2.],device=next(parser.parameters()).device))
 
     def forward(self,input_ids,attention_mask,candidate_positions,candidate_mask,query_positions):
+        """Use one backbone forward to score command slots, alternative slots, and whether clarification is
+        needed.
+        """
         if not self.training and input_ids.shape[0]==1:
             length=input_ids.shape[1]
             causal=torch.ones((length,length),device=input_ids.device,dtype=torch.bool).tril()[None,None]
@@ -47,6 +56,7 @@ class UnifiedModel(QwenCandidateRanker):
         return out
 
 def action_text(slots):
+    """Render resolved model slots as a short phrase for the clarification prompt."""
     if any(slots.get(s) is None for s in SLOTS):return None
     i,t,p=(slots[s] for s in SLOTS)
     if i=='move':return 'pull back' if p=='backward' else ('move in' if p=='forward' else f'move {p}')
@@ -54,6 +64,9 @@ def action_text(slots):
     return i+('' if p=='none' else ' '+p)
 
 def decode(out,records,include_scores=False):
+    """Decode both candidate rankings and the clarification flag, allowing execution only for a resolved
+    ordinary command.
+    """
     commands=out['command'].argmax(-1).cpu().tolist()
     primary=out['slots'].argmax(-1).cpu().tolist()
     alt=out['alternative'].argmax(-1).cpu().tolist()
@@ -61,6 +74,7 @@ def decode(out,records,include_scores=False):
     probs=out['clarify'].softmax(-1).cpu().tolist()
     results=[]
     for k,r in enumerate(records):
+        # Map 1-based candidate ranks to their original labels and use None for the unresolved index.
         def slots(indices):return {s:None if index==0 else r['candidates'][s][index-1] for s,index in zip(SLOTS,indices)}
         a,b=slots(primary[k]),slots(alt[k])
         clarify=bool(flags[k]);command='Y' if commands[k] else 'N'

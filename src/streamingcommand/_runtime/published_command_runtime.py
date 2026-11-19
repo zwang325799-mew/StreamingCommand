@@ -12,6 +12,7 @@ from .llm_ranker import SLOTS, SingleCommandGraphCache, load_qwen
 
 class PublishedCommandRuntime:
     def __init__(self, checkpoint, base_model, device, use_cuda_graphs):
+        """Restore the published flat LoRA and candidate head and record checkpoint identity for status."""
         checkpoint = Path(checkpoint)
         meta = json.loads((checkpoint / "experiment.json").read_text(encoding="utf-8"))
         if meta.get("adapter_layout") != "single_lora" or meta.get("initial_ar_adapter"):
@@ -26,10 +27,14 @@ class PublishedCommandRuntime:
                              lora_rank=meta.get("lora_rank"), adapter_layout="single_lora")
 
     def warmup(self, candidates):
+        """Prime the published ranker with a representative short command and candidate pool."""
         self.parse_turn("move left", candidates, {})
 
     @torch.inference_mode()
     def parse_turn(self, utterance, candidates, history, *, session_id=None, commit=False):
+        """Rank C/I/T/P candidates from one backbone pass and distinguish unresolved slots from business
+        none.
+        """
         started = time.perf_counter()
         record = dict(utterance=utterance, history=history, candidates=candidates,
                       command="N", slots=dict.fromkeys(SLOTS))
@@ -39,6 +44,7 @@ class PublishedCommandRuntime:
             out = self.model(**inputs)
 
         def rank(logits, labels):
+            """Return the probability of each valid label without including masked padding choices."""
             probs = logits[:len(labels)].float().softmax(-1).cpu().tolist()
             return [{"value": label, "probability": prob} for label, prob in zip(labels, probs)]
 

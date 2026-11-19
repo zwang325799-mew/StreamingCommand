@@ -4,6 +4,7 @@ import pytest
 
 
 def test_native_banks_roundtrip_preserves_weights_and_addresses(tmp_path, monkeypatch):
+    """Check that switching between native banks preserves source bytes and live parameter pointers."""
     import torch
     from safetensors.torch import save_file
     import streamingcommand
@@ -32,6 +33,7 @@ def test_native_banks_roundtrip_preserves_weights_and_addresses(tmp_path, monkey
 
 
 def test_native_prior_preserves_original_boundary_logits(monkeypatch):
+    """Check that applying domain priors leaves logits unchanged when a boundary token already leads."""
     import torch
     import streamingcommand
     monkeypatch.syspath_prepend(str(Path(streamingcommand.__file__).parent / "workers"))

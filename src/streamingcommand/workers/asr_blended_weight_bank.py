@@ -12,11 +12,13 @@ from asr_shared_weight_bank import WeightBankExtension, SharedEngineController
 
 
 def digest(tensor):
+    """Hash a tensor's contiguous raw bytes for a bitwise weight-bank roundtrip check."""
     return hashlib.sha256(tensor.detach().cpu().contiguous().view(__import__('torch').uint8).numpy().tobytes()).hexdigest()
 
 
 class BlendedWeightBankExtension(WeightBankExtension):
     def prepare_asr_banks(self, primary_dir, alternate_dir, bank_mode='swap'):
+        """Prepare exact source banks before building the optional blends in swap mode."""
         inventory = super().prepare_asr_banks(primary_dir, alternate_dir, bank_mode)
         if bank_mode != 'swap':
             raise ValueError('The interpolation experiment requires the one-inactive-bank swap implementation')
@@ -24,6 +26,9 @@ class BlendedWeightBankExtension(WeightBankExtension):
         return {**inventory, **extra}
 
     def prepare_experimental_blends(self):
+        """Build FP32 interpolations stored at model precision and verify source-bank bytes and graph
+        addresses.
+        """
         import torch
         fractions = json.loads(os.environ.get('PHONO_ASR_BLEND_FRACTIONS', '[0.25,0.5,0.75,0.9]'))
         assert fractions and len(set(fractions)) == len(fractions)
@@ -61,6 +66,7 @@ class BlendedWeightBankExtension(WeightBankExtension):
                 'fixed_graph_parameter_addresses': True}
 
     def select_asr_bank(self, variant):
+        """Swap the selected bank into the live parameter storage without changing graph addresses."""
         import torch
         if not hasattr(self, '_asr_blend_inactive'):
             return super().select_asr_bank(variant)
@@ -88,6 +94,7 @@ class BlendedWeightBankExtension(WeightBankExtension):
 
 class BlendedEngineController(SharedEngineController):
     def select(self, variant):
+        """Invalidate the engine caches before activating a different interpolated weight bank."""
         if variant not in self.inventory['bank_names']:
             raise ValueError('Unknown experimental ASR variant ' + variant)
         started = time.perf_counter()

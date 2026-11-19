@@ -80,6 +80,7 @@ class Qwen3ASRAudioEncoderConfig(PretrainedConfig):
 
     model_type = "qwen3_asr_audio_encoder"
 
+    # Store the audio encoder's feature dimensions, block settings, and dropout configuration.
     def __init__(
         self,
         num_mel_bins=128,
@@ -227,6 +228,7 @@ class Qwen3ASRTextConfig(PretrainedConfig):
     model_type = "qwen3_asr_text"
     base_config_key = "text_config"
 
+    # Store decoder dimensions, attention head grouping, token IDs, and rotary settings.
     def __init__(
         self,
         vocab_size=151936,
@@ -326,6 +328,7 @@ class Qwen3ASRThinkerConfig(PretrainedConfig):
         "text_config": Qwen3ASRTextConfig,
     }
 
+    # Build the thinker's audio and text configs from checkpoint dictionaries or supplied objects.
     def __init__(
         self,
         audio_config=None,
@@ -395,6 +398,7 @@ class Qwen3ASRConfig(PretrainedConfig):
         "thinker_config": Qwen3ASRThinkerConfig,
     }
 
+    # Build the top-level ASR model config and retain its supported language list.
     def __init__(
         self,
         thinker_config=None,

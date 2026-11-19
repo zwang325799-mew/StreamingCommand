@@ -16,6 +16,7 @@ PROFILES = ('control', 'prior40', 'prior50', 'prior60', 'phrases30', 'phrases40'
 
 
 def policy(profile, **kwargs):
+    """Select the fixed six-variant vocabulary or context recipe while retaining the acoustic gate."""
     if profile not in PROFILES:
         raise ValueError(profile)
     if profile == 'control':
@@ -34,6 +35,7 @@ def policy(profile, **kwargs):
 
 
 def configure(asr, profile):
+    """Install the prior-comparison worker and attach the selected profile to its status."""
     if asr.status.get('asr_engine_count') != 1 or profile not in PROFILES:
         raise ValueError('Invalid single-engine candidate')
     if profile == 'control':

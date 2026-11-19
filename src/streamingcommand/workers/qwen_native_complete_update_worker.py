@@ -7,6 +7,7 @@ from asr_stream_complete_update import complete_update
 original_streaming=Qwen3ASRModel.streaming_transcribe
 
 def streaming_transcribe(self,audio,state):
+    """Wrap the SDK streaming update so one generation consumes the full available causal prefix."""
     result,audit=complete_update(original_streaming,self,audio,state)
     if audit is not None:
         print(json.dumps({'stream_complete_prefix':audit}),file=sys.stderr,flush=True)

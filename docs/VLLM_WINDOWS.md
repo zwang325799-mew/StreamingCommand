@@ -22,7 +22,7 @@ python -m venv .asr-vllm
 ASRConfig(backend="vllm", python="/path/to/asr-env/bin/python", device="cuda:0")
 ```
 
-ASR 使用数字 CUDA_VISIBLE_DEVICES；可通过 expected_gpu_uuid 额外核验设备。新机器默认不带任何旧 UUID。
+旧版 vLLM 要求数字 `CUDA_VISIBLE_DEVICES`。包会从调用方的可见列表选出配置指定的设备。旧版 vLLM 收到 UUID 形式的选择时会报错。原生 PyTorch 和内置 Qwen3-ASR 的 vLLM 适配路径还可通过 `expected_gpu_uuid` 核验实际设备。
 
 ## 原生 Windows vLLM 在哪里
 

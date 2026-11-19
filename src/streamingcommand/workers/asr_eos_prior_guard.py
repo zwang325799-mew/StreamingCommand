@@ -7,6 +7,7 @@ EOS_TOKEN_ID = 151645
 
 
 def guarded_apply(original, processor, logits):
+    """Restore original logits in rows where EOS led before the logit prior."""
     if not processor.biases:
         return original(processor, logits)
     import torch
@@ -17,12 +18,14 @@ def guarded_apply(original, processor, logits):
 
 
 def install():
+    """Wrap the vLLM logit-bias processor once with EOS preservation."""
     from vllm.v1.sample.logits_processor.builtin import LogitBiasLogitsProcessor
     original = LogitBiasLogitsProcessor.apply
     if getattr(original, '_phono_eos_prior_guard', False):
         return
 
     def apply(self, logits):
+        """Apply the EOS guard using the captured unwrapped logit-bias method."""
         return guarded_apply(original, self, logits)
 
     apply._phono_eos_prior_guard = True

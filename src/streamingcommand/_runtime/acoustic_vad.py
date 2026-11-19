@@ -40,6 +40,7 @@ class AcousticGateConfig:
     passthrough_before_calibration: bool = False
 
     def __post_init__(self):
+        """Reject inconsistent acoustic thresholds, calibration limits, or hysteresis settings."""
         if self.onset_snr_db < self.continuation_snr_db or self.continuation_snr_db < 0:
             raise ValueError('Require onset SNR >= continuation SNR >= 0')
         if not 0 <= self.noise_quantile <= 1:
@@ -78,6 +79,7 @@ class AcousticGateVAD:
     during active speech is hysteresis, not a text-dependent acceptance rule.
     """
     def __init__(self, base_vad, config: AcousticGateConfig | None = None):
+        """Initialize a causal energy gate around the supplied frame-level VAD."""
         self.base_vad = base_vad
         self.config = config or AcousticGateConfig()
         self._idle_levels = deque(maxlen=self.config.noise_window_frames)
@@ -88,9 +90,11 @@ class AcousticGateVAD:
                       'accepted_speech_frames': 0, 'gated_speech_frames': 0}
 
     def set_active(self, active: bool):
+        """Notify the gate when the streaming session enters or leaves an active speech segment."""
         self._active = bool(active)
 
     def is_speech(self, frame: bytes, sample_rate: int) -> bool:
+        """Combine the base VAD vote with calibrated energy and onset or continuation rules."""
         raw = bool(self.base_vad.is_speech(frame, sample_rate))
         level = rms_dbfs(frame)
         # Use only past idle frames for this decision.  Starting immediately on
@@ -125,5 +129,6 @@ class AcousticGateVAD:
 
     @property
     def description(self):
+        """Return the effective gate settings for session metadata."""
         return {'kind': 'adaptive_rms_gate', 'config': asdict(self.config),
                 'noise_dbfs': self.noise_dbfs, 'stats': dict(self.stats)}

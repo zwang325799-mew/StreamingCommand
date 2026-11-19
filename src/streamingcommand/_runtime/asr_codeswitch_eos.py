@@ -12,6 +12,7 @@ PROFILES = ('control', 'eos_glossary40', 'eos_classifiers40', 'eos_phrases60',
 
 
 def policy(profile, **kwargs):
+    """Serialize a fixed bilingual context and bounded bias for the EOS-protected worker."""
     if profile not in PROFILES:
         raise ValueError(profile)
     if profile == 'control':
@@ -32,6 +33,7 @@ def policy(profile, **kwargs):
 
 
 def configure(asr, profile):
+    """Install the EOS-protected final request policy for this context or prior comparison."""
     configure_base(asr, 'control')
     if profile not in PROFILES:
         raise ValueError(profile)

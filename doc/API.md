@@ -67,7 +67,7 @@ asyncio.run(main())
 | --- | --- |
 | `StreamingCommand(config=None, *, config_path=None, asr_backend=None, command_backend=None)` | 创建待启动实例。可以传 `StreamingConfig`、位置参数 JSON 路径，或关键字 `config_path`。同时提供 `config` 与 `config_path` 会报错。自定义后端可经关键字注入；注入 ASR 时也由调用方提供所需命令后端。 |
 | `StreamingASR(config=None, **kwargs)` | 只做转写，接受相同的配置路径和 ASR 后端参数，常规启动时只加载 ASR。 |
-| `await StreamingCommand.initialize(config_path=None)`、`await StreamingASR.initialize(config_path=None)` | 创建、启动并返回就绪实例，省略路径使用包默认值。调用方负责 `await sdk.close()`。 |
+| `await StreamingCommand.initialize(config_path=None, *, config=None)`、`await StreamingASR.initialize(config_path=None, *, config=None)` | 创建、启动并返回就绪实例。可传 JSON 路径或 `StreamingConfig` 对象，省略两者时使用包默认值。调用方负责 `await sdk.close()`。 |
 | `await sdk.start()` | 在已有实例上启动模型并返回自身。已就绪时可重复调用。 |
 | `async with StreamingCommand(...) as sdk` | 进入时启动，退出时关闭。也适用于 `StreamingASR`。 |
 | `sdk.info()` | 返回就绪状态和后端状态。实际 ASR 的 `model_sources` 给出来源和解析目录。命令后端的 `model_id`、`base_model_source`、`checkpoint_source`、`checkpoint` 和 `default_candidates` 给出所用模型与候选。 |
@@ -75,7 +75,8 @@ asyncio.run(main())
 | `sdk.listen(*, device=None, candidates=None, history=None)` | 用 `async for` 接收麦克风识别事件。`device` 为录音设备。 |
 | `sdk.transcribe_file(path, *, realtime=True, candidates=None, history=None)` | 用 `async for` 接收文件识别事件。默认按音频时长回放。 |
 | `sdk.stream(source, *, candidates=None, history=None)` | 接受异步可迭代的 PCM 字节源，返回事件异步迭代器。提供含静音的 16 kHz 单声道、小端 PCM16。 |
-| `sdk.session(*, candidates=None, history=None, vad=None)` | 返回待启动的 `CommandStream`。可注入实现 `is_speech(frame, rate)` 的 VAD。一个实例同时支持一个音频会话。 |
+| `sdk.session(*, candidates=None, history=None, vad=None, interval_ms=None, endpoint_ms=None, max_segment_ms=None, recognition_logic=None)` | 返回待启动的 `CommandStream`。可注入实现 `is_speech(frame, rate)` 的 VAD。未提供的会话选项沿用实例配置。一个实例同时支持一个音频会话。 |
+| `await sdk.switch_model(model)` | 在空闲时切换状态所列的可用命令模型，返回命令模型状态。ASR 保持驻留。 |
 | `await sdk.close()` | 结束活动会话，释放实例拥有的后端，可重复调用。再次使用时请新建实例。 |
 
 可用 `history={"H1": "I=bend;T=none;P=left"}` 给出初始历史，空历史可省略。一个音频会话会在动作确定后更新 H1。流式输出中 `transcript.partial` 和 `command.partial` 是可修订的预览。`transcript.final` 给出定稿文字，`command.final` 给出模型的决定。检查 `resolved` 和 `execute` 后再消费动作；`command.error` 携带解析失败信息。
@@ -91,6 +92,7 @@ asyncio.run(main())
 | `session.events()` | 用 `async for` 连续读取事件，支持一个活动消费者。 |
 | `session.configure_candidates(candidates)` | 只更新当前会话，返回生效候选和 `candidate_version`，先前待答的澄清失效。 |
 | `await session.feedback(text, clarification_id)` | 用自然语言回答当前澄清。ID 取自先前结果，结果通过 `command.feedback` 事件返回。 |
+| `await session.clear_memory()` | 清除待答澄清和模型侧临时状态。后续命令仍可使用 H1。 |
 | `await session.finish()` | 通知输入结束，等待定稿和命令处理完成，发出 `session.completed` 并结束事件流。消费任务应保持运行。 |
 | `await session.fail(exc)` | 将输入源异常转交给事件消费者，消费者会收到该异常。随后关闭会话。 |
 | `await session.close()` | 结束会话并释放占用，可用于提前中断。对完整录音先调用 `finish()` 以取回末尾定稿。 |
@@ -117,12 +119,14 @@ async with sdk.session() as session:
 | JSON 字段 | 默认值及作用 |
 | --- | --- |
 | `models` | 可按资源配置 `source`、远端链接与版本或本地模型目录。写法见本页“指定模型来源”。 |
-| `asr.backend`、`asr.device` | 默认为 `native`、`auto`。原生执行支持 `cpu` 或 `cuda:N`。可选 `vllm`、`vllm-builtin`（需要兼容 CUDA 环境），或协议测试用 `fake`。 |
+| `asr.backend`、`asr.device` | 默认为 `native`、`auto`。原生执行支持 `cpu` 或 `cuda:N`。设置 `CUDA_VISIBLE_DEVICES` 时，`N` 为调用方可见列表中的编号。命令模型采用同一规则。可选 `vllm`、`vllm-builtin`（需要兼容 CUDA 环境），或协议测试用 `fake`。 |
 | `asr.profile` | 默认 `v15-canto-commit`，可选 `v17-yue-precision`。单 ASR 的历史配置还有 `v15`、`v15-realtime`、`v15-continuity`、`v15-temporal`、`v15-temporal-stream`、`v15-speech-aware`。 |
 | `asr.python`、`asr.expected_gpu_uuid`、`asr.warmup` | 可指定 worker 解释器与预期 GPU 身份，默认均为 `null`。默认打开预热。 |
 | `asr.model_dir`、`asr.alternate_model_dir`、`asr.language_model_dir`、`asr.speech_model_dir` | 分别覆盖 ASR 主模型、参考基座、语种模型和语音活动模型目录。默认按固定版本解析。 |
+| `asr.compatibility_lock_file` | 可选 POSIX 锁路径。用于和已有部署共用一把额外的 ASR 锁。 |
 | `command.enabled`、`command.model`、`command.device` | 默认 `true`、`clarification-new`、`auto`。可选模型见本页开头。 |
 | `command.candidates`、`command.candidates_file` | 可选内嵌 I/T/P 或候选 JSON 路径，默认均为 `null`。 |
+| `command.candidate_profiles_dir` | 可选候选配置目录。省略时使用包的用户配置目录。 |
 | `command.recognition_logic` | 默认 `original`。流式会话可选 `semantic-pair`，比较当前片段和相邻未执行片段拼接后的语义。 |
 | `command.python`、`command.base_model_dir`、`command.checkpoint` | 覆盖命令 worker 解释器、语言模型基座、与所选模型兼容的 checkpoint 目录。默认均为 `null`。 |
 | `command.use_cuda_graphs`、`command.expected_gpu_uuid` | CUDA 图默认打开；可选预期 GPU 身份。 |
@@ -145,6 +149,8 @@ async with sdk.session() as session:
 | `profiles.default_path(model, fallback)` | 返回该模型默认候选的 `Path`，缺少映射时使用传入的备用路径。 |
 
 ## 资源、集成和 CLI
+
+安装 `streamingcommand[speech]` 后，可用 `streamingcommand.speech.ClarificationSpeech(logs_root=None, *, offline=False)` 朗读澄清提示。用 `await speech.speak(text)` 返回 WAV 字节，可用 `await speech.start()` 预热，用 `await speech.close()` 释放 CPU worker。
 
 | 调用 | 用途与返回值 |
 | --- | --- |
