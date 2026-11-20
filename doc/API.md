@@ -1,33 +1,99 @@
-# StreamingCommand 功能与 API
+# StreamingCommand API 索引
 
-从 `streamingcommand` 导入 `StreamingCommand`、`StreamingASR`、`StreamingConfig`、`ASRConfig`、`CommandConfig`、`CandidateProfiles`、`audio_file` 和 `microphone`。本页也列出会话对象的可调用方法、资源管理函数和命令行入口。安装后的文档位于 Python 环境的 `share/doc/streamingcommand/API.md`。
-
-## 用一份 JSON 切换场景
-
-随包提供的 [settings.json](../src/streamingcommand/assets/settings.json) 使用内窥镜候选和默认模型。安装后可从 `importlib.resources.files("streamingcommand").joinpath("assets/settings.json")` 读取同一模板，复制到自己的目录后再编辑。
-
-| 完整范例 | ASR | 命令模型 |
-| --- | --- | --- |
-| [local-latest.json](../src/streamingcommand/assets/presets/local-latest.json) | 本地 `v17-yue-precision`，JSON 列出主模型、参考基座、语种判别和 VAD 的实际目录。 | 本地 Qwen 基座 + `clarification-hybrid`（epoch 2 / step1392），启用 `semantic-pair`。迁移到其他机器时按实际位置改六个 `path`。 |
-| [huggingface-release.json](../src/streamingcommand/assets/presets/huggingface-release.json) | `humoiww/PhonoCommand-ASR@ff8daaaf`，使用 `v17-yue-precision`。 | `Qwen/Qwen3.5-0.8B@2fc06364` + `humoiww/PhonoCommand-LLM-0.8B@d5217d0c` 子目录 `clarification-hybrid`（epoch 2 / step1392）。预设 I/T/P 采用 `endoscope-hybrid`。 |
-
-表中提交号为缩写。JSON 给出完整 URL 和 40 位提交号。V17 使用同一套经哈希核验的 ASR 权重，粤语策略由库在推理时应用。 [Hugging Face 发布记录](https://huggingface.co/humoiww/PhonoCommand-ASR/blob/ff8daaafd4a7fd4b396c2ffcab8da230d3c17a4f/releases/20261120-hybrid/ASR_PROFILE.json)
-
-### 指定模型来源
-
-`asr.profile` 选择语音处理策略，`command.model` 选择命令解码器及同名权重项。`models` 可逐项指定 `asr`（语音识别主模型）、`asr-base`（参考基座）、`language`（语种模型）、`speech`（VAD）、`llm-base`（命令基座）和命令模型 ID。各项可以混用不同来源。省略的项使用包内默认来源。
-
-| `source` | 必填字段与示例 |
+| 你想做什么 | 从这里开始 |
 | --- | --- |
-| `huggingface` | `"url": "https://huggingface.co/humoiww/PhonoCommand-LLM-0.8B"`、`"revision": "d5217d0c486933822da027600d7ceb9ed2d9bfb7"`、`"subfolder": "clarification-hybrid"`。命令模型还可填 `"expected_step": 1392`。 |
-| `local` | `"path": "./models/my-checkpoint"`。填写实际模型目录。相对路径以配置文件所在目录为起点。命令模型还可写 `"expected_step": 936`，启动时检查 `experiment.json` 的步数，用错目录会报错。 |
-| `package` | `path` 为 `assets/models/clarification-new` 或 `assets/models/clarification-latest`，对应随包分发的两个澄清模型。 |
+| 用系统默认麦克风实时识别 | [麦克风识别](#麦克风识别) |
+| 识别已有录音，或直接解析一句文字 | [录音与文字](#录音与文字) |
+| 从结果里取出转写或命令 | [识别事件](#识别事件) |
+| 选择 Hugging Face 或本地模型 | [指定模型来源](#指定模型来源) |
+| 修改模型能识别的动作、目标和方向 | [更换候选](#更换候选) |
+| 查模型下载到哪里，或切到离线 | [缓存和离线使用](#缓存和离线使用) |
+| 把应用采集的音频送给识别器 | [自有音频](#自有音频) |
+| 手动启动、关闭或切换模型 | [管理识别器](#管理识别器) |
+| 查配置字段、候选文件或澄清朗读 | [配置字段](#配置字段) · [候选文件](#候选文件) · [澄清朗读](#澄清朗读) |
 
-更换仓库或版本时保持对应模型的权重结构。旧候选排序器 `phonocommand-llm-0.8b` 在目录根部读取 PEFT 适配器、`head.safetensors` 和 `experiment.json`。澄清模型从 `adapter/` 读取 PEFT 权重，根部还需 `head.safetensors`、`clarify_head.pt` 和 `experiment.json`。同一资源的 `models` 条目和旧式本地路径字段只能填写一处。
+## 麦克风识别
 
-### 更换候选
+按 [README](../README.md#用默认麦克风开始识别) 安装后，在仓库根目录运行 `python example/live_recognize.py`。脚本会读取 `example/settings.json`，打开系统默认麦克风并持续输出结果。按 Ctrl+C 停止。
 
-下面是一份可以直接保存为 `settings.json` 的器械护士配置。它选用 step936，只允许递交、停止和复位。这个场景没有方向，模型的方向输出为 JSON `null`。
+接入到自己的 Python 应用时，核心代码如下。示例只打印定稿。完整样板也打印识别中的预览与命令结果。 [麦克风样板](../example/live_recognize.py)
+
+```python
+import asyncio
+from streamingcommand import StreamingCommand
+
+
+async def main():
+    async with StreamingCommand(config_path="example/settings.json") as recognizer:
+        async for event in recognizer.listen():
+            if event["type"] == "transcript.final":
+                print(event["text"], flush=True)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+`recognizer.listen(*, device=None, candidates=None, history=None)` 返回事件异步迭代器。省略 `device` 使用系统默认输入，指定时可传设备编号或名称。用 `python -m sounddevice` 查看设备。只需要语音转写时，把 `StreamingCommand` 换成 `StreamingASR`。
+
+## 录音与文字
+
+| 接入方式 | Python 调用 | 返回 |
+| --- | --- | --- |
+| 识别已有录音 | `async for event in recognizer.transcribe_file(path)` | 连续的转写和命令事件 |
+| 直接解析一句文字 | `result = await recognizer.parse(text)` | 一个包含 `status`、`slots`、`resolved` 和 `execute` 的字典 |
+
+`transcribe_file(path, *, realtime=True, candidates=None, history=None)` 自动解码、下混并重采样。默认按录音时长输入，也可以设 `realtime=False`。在仓库根目录执行 `python example/recognize.py` 可回放随附的粤语录音。 [录音样板](../example/recognize.py)
+
+`parse(text, *, candidates=None, history=None)` 需要启用命令模型，并在识别器空闲时调用。传入非空文字，例如 `await recognizer.parse("Bend up.")`。每次独立调用的历史由应用传入。
+
+## 识别事件
+
+| 事件 | 应用怎么用 |
+| --- | --- |
+| `transcript.partial` | 读取 `text` 显示预览，按 `segment_id` 替换同一段的旧预览。 |
+| `transcript.final` | 保存本段定稿，文字在 `text`。 |
+| `command.partial` | 显示命令预览。 |
+| `command.final` | 读取 `status` 和 `slots`。应用需要消费动作时，先检查 `resolved` 与 `execute`。 |
+| `command.error` | 读取 `message` 了解本次解析失败的原因。 |
+| `command.feedback` | 读取 [澄清回答](#逐块输入音频) 的处理结果。 |
+| `session.started`、`session.completed` | 识别开始和输入正常结束时的生命周期事件。 |
+
+录音、麦克风和自有音频都支持传入初始历史 `history={"H1": "I=bend;T=none;P=left"}`。省略时从空历史开始。每段连续音频保留最近一条已确定的命令作为 H1。
+
+## 指定模型来源
+
+| 配置范例 | 适合谁 |
+| --- | --- |
+| [示例 settings.json](../example/settings.json) | 用两个 Python 样板直接运行。固定 Hugging Face 上的 V17 ASR 与 step 1392 Clarification。 |
+| [本地最新测试版](../src/streamingcommand/assets/presets/local-latest.json) | 权重已在本地。复制后把各项 `path` 改成自己的实际目录。 |
+| [Hugging Face 发布版](../src/streamingcommand/assets/presets/huggingface-release.json) | 从远端加载到其他项目。JSON 列出每项资源的 URL 和 40 位提交 SHA。 |
+| [包的默认配置](../src/streamingcommand/assets/settings.json) | 了解省略配置路径时的默认模型和参数。 |
+
+`asr.profile` 选择语音处理策略。`command.model` 选择命令模型和 `models` 中的同名权重项。可以为 ASR 主模型 `asr`、参考模型 `asr-base`、语种模型 `language`、语音活动检测 `speech`、命令基座 `llm-base` 和选中的命令模型分别设置来源。
+
+| `models.<资源名>.source` | 同一项中填写的字段 |
+| --- | --- |
+| `huggingface` | `url` 为模型仓库链接，`revision` 为完整提交 SHA，`subfolder` 可指定仓库子目录。 |
+| `local` | `path` 为模型目录，可以是绝对路径或相对配置文件的路径。 |
+| `package` | `path` 为 `assets/models/clarification-new` 或 `assets/models/clarification-latest`，对应随包提供的权重。 |
+
+命令权重可加 `expected_step`，启动时检查 `experiment.json` 中的步数。每个资源选用 `models` 条目或下方的旧式路径字段之一。旧候选排序器需要根目录里的 PEFT 适配器、`head.safetensors` 和 `experiment.json`。澄清模型的 PEFT 权重位于 `adapter/`，根目录还需要 `head.safetensors`、`clarify_head.pt` 和 `experiment.json`。
+
+| `command.model` | 权重 |
+| --- | --- |
+| `clarification-new` | 默认 step 3003 |
+| `clarification-latest` | step 936 |
+| `clarification-hybrid` | step 1392，示例使用的模型 |
+| `phonocommand-llm-0.8b` | 旧候选排序器 |
+
+三种澄清模型支持 H1、器械护士的空方向候选和 `semantic-pair`。发布版使用的粤语处理策略由库在推理时应用。 [V17 ASR 发布记录](https://huggingface.co/humoiww/PhonoCommand-ASR/blob/ff8daaafd4a7fd4b396c2ffcab8da230d3c17a4f/releases/20261120-hybrid/ASR_PROFILE.json)
+
+## 更换候选
+
+编辑 JSON 的 `command.candidates`，或用 `command.candidates_file` 指向一份只含 I、T、P 的 JSON。从包的默认候选开始时，省略这两个字段。I 是意图，T 是目标，P 是方向或位置。
+
+器械护士场景可用以下配置。它只允许递交、停止和复位，方向结果为 `null`。
 
 ```json
 {
@@ -42,132 +108,112 @@
 }
 ```
 
-```python
-import asyncio
-from streamingcommand import StreamingCommand
+I 和 T 至少各含一个值，每组里的名称应非空、唯一。P 非空时，T 和 P 都需要业务值 `"none"`。P 可在澄清模型的器械护士场景中留空，此时 I 只能取 `give`、`stop`、`reset`。内窥镜自转用 `self rotate`。示例配置的 `endoscope-hybrid` 还包含 `zoom in`、`zoom out`、`spray water` 和 `spray air`。
 
-async def main():
-    async with StreamingCommand(config_path="settings.json") as sdk:
-        info = sdk.info()["command"]
-        print(info["model_id"], info["checkpoint_step"], info["default_candidates"])
-        result = await sdk.parse("Please give me the grasper.")
-        print(result["status"], result["slots"])
+`listen`、`transcribe_file`、`parse`、`stream` 和 `session` 接受 `candidates=...`，只覆盖这次输入对应的候选。
 
-asyncio.run(main())
-```
+## 缓存和离线使用
 
-- `command.model` 可选 `clarification-new`（step3003，默认）、`clarification-latest`（step936）、`clarification-hybrid`（step1392）或 `phonocommand-llm-0.8b`（旧候选排序器）。三个澄清模型支持 H1、空 P 的器械护士配置和 `semantic-pair`。内窥镜新命令表使用 `clarification-hybrid` 和 `endoscope-hybrid.json`，新增 `zoom in`、`zoom out`、`spray water`、`spray air`。
-- `command.candidates` 直接保存三组有序字符串。I 是意图，T 是目标，P 是方向或位置。每组内部的值须非空且唯一，I 和 T 至少各有一项。P 有值时，T 和 P 都须包含业务值 `"none"`。P 为空时，I 只支持 `give`、`stop`、`reset` 的非空子集。自转用 `self rotate`。模型从提供的候选中预测，新增名称的识别效果需要用自己的输入验证。
-- 也可以用 `"candidates_file": "profiles/scrub.json"` 引用单独一个只含 I、T、P 的 JSON。它与内嵌 `candidates` 二选一。两者都省略时，使用所选模型的默认候选文件。显式传给 `parse` 或 `session` 的候选只覆盖本次调用或会话。
-- JSON 中省略的字段使用配置类默认值。配置里的相对文件路径以该 JSON 所在目录为基准；构造器接受的配置文件路径本身相对于当前工作目录。
+默认使用 Hugging Face 的共享 Hub 缓存，通常是 `~/.cache/huggingface/hub`。环境变量 `HF_HUB_CACHE` 或 `HF_HOME` 可以改变位置。要单独存放，优先设 JSON 的 `cache_dir`，也可设 `STREAMINGCOMMAND_CACHE`，Hub 快照将放在指定目录下的 `hub/`。环境变量应在启动 Python 前设置。 [Hugging Face 缓存布局](https://huggingface.co/docs/huggingface_hub/en/guides/manage-cache)
 
-## 识别器
+用同一份配置联网初始化一次，再将 JSON 顶层的 `offline` 改为 `true`。包会从完整共享快照或经校验的旧缓存读取固定版本，缺少所需文件时在启动阶段报错。配置为 `local` 的资源直接从目录加载。自定义提交在离线模式下也会尝试读取旧 Hub 快照。
 
-| Python 调用 | 用途与返回值 |
+下面的工具通过 `streamingcommand.resources` 导入。
+
+| 调用 | 用途 |
 | --- | --- |
-| `StreamingCommand(config=None, *, config_path=None, asr_backend=None, command_backend=None)` | 创建待启动实例。可以传 `StreamingConfig`、位置参数 JSON 路径，或关键字 `config_path`。同时提供 `config` 与 `config_path` 会报错。自定义后端可经关键字注入；注入 ASR 时也由调用方提供所需命令后端。 |
-| `StreamingASR(config=None, **kwargs)` | 只做转写，接受相同的配置路径和 ASR 后端参数，常规启动时只加载 ASR。 |
-| `await StreamingCommand.initialize(config_path=None, *, config=None)`、`await StreamingASR.initialize(config_path=None, *, config=None)` | 创建、启动并返回就绪实例。可传 JSON 路径或 `StreamingConfig` 对象，省略两者时使用包默认值。调用方负责 `await sdk.close()`。 |
-| `await sdk.start()` | 在已有实例上启动模型并返回自身。已就绪时可重复调用。 |
-| `async with StreamingCommand(...) as sdk` | 进入时启动，退出时关闭。也适用于 `StreamingASR`。 |
-| `sdk.info()` | 返回就绪状态和后端状态。实际 ASR 的 `model_sources` 给出来源和解析目录。命令后端的 `model_id`、`base_model_source`、`checkpoint_source`、`checkpoint` 和 `default_candidates` 给出所用模型与候选。 |
-| `await sdk.parse(text, *, candidates=None, history=None)` | 直接解析一条非空文本，返回含 `status`、`slots`、`resolved`、`execute` 等字段的字典。需要启用命令模型；音频会话占用实例时使用该会话的澄清接口。独立调用的历史由调用方传入。 |
-| `sdk.listen(*, device=None, candidates=None, history=None)` | 用 `async for` 接收麦克风识别事件。`device` 为录音设备。 |
-| `sdk.transcribe_file(path, *, realtime=True, candidates=None, history=None)` | 用 `async for` 接收文件识别事件。默认按音频时长回放。 |
-| `sdk.stream(source, *, candidates=None, history=None)` | 接受异步可迭代的 PCM 字节源，返回事件异步迭代器。提供含静音的 16 kHz 单声道、小端 PCM16。 |
-| `sdk.session(*, candidates=None, history=None, vad=None, interval_ms=None, endpoint_ms=None, max_segment_ms=None, recognition_logic=None)` | 返回待启动的 `CommandStream`。可注入实现 `is_speech(frame, rate)` 的 VAD。未提供的会话选项沿用实例配置。一个实例同时支持一个音频会话。 |
-| `await sdk.switch_model(model)` | 在空闲时切换状态所列的可用命令模型，返回命令模型状态。ASR 保持驻留。 |
-| `await sdk.close()` | 结束活动会话，释放实例拥有的后端，可重复调用。再次使用时请新建实例。 |
+| `ModelStore(cache_dir=None, *, offline=False)` | 手动管理模型资源。 |
+| `store = ModelStore.from_config(config)` | 使用识别器的来源、缓存和离线设置。 |
+| `store.hub_cache_dir` | 查看新下载的目的地。 |
+| `store.source(name)` | 查看指定资源的生效来源。 |
+| `store.ensure(name, override=None)` | 返回资源的实际本地路径，需要时下载。包清单内的远端文件按大小和 SHA-256 校验。`override` 可指定调用方的本地目录。 |
+| `sha256(path)` | 计算一个文件的 SHA-256。 |
 
-可用 `history={"H1": "I=bend;T=none;P=left"}` 给出初始历史，空历史可省略。一个音频会话会在动作确定后更新 H1。流式输出中 `transcript.partial` 和 `command.partial` 是可修订的预览。`transcript.final` 给出定稿文字，`command.final` 给出模型的决定。检查 `resolved` 和 `execute` 后再消费动作；`command.error` 携带解析失败信息。
+## 自有音频
 
-## 手动输入 PCM 的会话
+如果应用已经有异步音频源，直接使用 `async for event in recognizer.stream(source)`。`stream(source, *, candidates=None, history=None)` 接收含静音的 16 kHz、单声道、小端 PCM16 字节块，返回与麦克风接口相同的事件。
 
-通过 `session = sdk.session(...)` 创建，等价的类为 `streamingcommand.pipeline.CommandStream(owner, *, candidates=None, history=None, vad=None)`。用不同的 asyncio 任务发送 PCM 和消费事件，避免有界队列填满。
+需要原始 PCM 时，可以从 `streamingcommand` 导入下面两个函数。
 
-| 调用 | 用途与返回值 |
+| 调用 | 返回 |
 | --- | --- |
-| `async with session` 或 `await session.start()` | 启动 ASR 会话和可选的命令会话，产生 `session.started`。上下文退出时关闭。 |
-| `await session.feed(pcm)` | 加入一块 PCM 字节。奇数字节长度或类型不符会报错，缓冲超限会抛出 `BufferError`。 |
-| `session.events()` | 用 `async for` 连续读取事件，支持一个活动消费者。 |
-| `session.configure_candidates(candidates)` | 只更新当前会话，返回生效候选和 `candidate_version`，先前待答的澄清失效。 |
-| `await session.feedback(text, clarification_id)` | 用自然语言回答当前澄清。ID 取自先前结果，结果通过 `command.feedback` 事件返回。 |
-| `await session.clear_memory()` | 清除待答澄清和模型侧临时状态。后续命令仍可使用 H1。 |
-| `await session.finish()` | 通知输入结束，等待定稿和命令处理完成，发出 `session.completed` 并结束事件流。消费任务应保持运行。 |
-| `await session.fail(exc)` | 将输入源异常转交给事件消费者，消费者会收到该异常。随后关闭会话。 |
-| `await session.close()` | 结束会话并释放占用，可用于提前中断。对完整录音先调用 `finish()` 以取回末尾定稿。 |
+| `microphone(device=None, *, sample_rate=None, block_ms=20, queue_seconds=5)` | 异步迭代录音字节。默认按输入设备采样率采集，再转换到 16 kHz。缓冲溢出会抛出 `streamingcommand.audio.AudioOverflowError`。 |
+| `audio_file(path, *, realtime=True, block_ms=20)` | 异步迭代录音文件解码后的单声道 16 kHz PCM16。 |
 
-```python
-# sdk 已启动，pcm_source 是异步 PCM 字节源
-async with sdk.session() as session:
-    async def consume():
-        async for event in session.events():
-            print(event["type"])
+### 逐块输入音频
 
-    async def produce():
-        async for pcm in pcm_source:
-            await session.feed(pcm)
-        await session.finish()
+需要从回调或网络接收 PCM、动态更新候选或回复澄清时，用 `session = recognizer.session(...)` 创建一次音频会话。会话负责本次输入、事件、H1 和待答澄清。识别器负责加载模型，可以顺序复用来开启下一次会话。
 
-    await asyncio.gather(produce(), consume())
-```
+`session(*, candidates=None, history=None, vad=None, interval_ms=None, endpoint_ms=None, max_segment_ms=None, recognition_logic=None)` 中的参数覆盖本次会话。自定义 VAD 需要实现 `is_speech(frame, rate)`。每个识别器支持一个活动会话，发送音频和读取事件在两个 asyncio 任务里并行进行。
 
-## 配置类和字段
-
-`StreamingConfig(asr=..., command=..., ...)` 接受 `ASRConfig(...)`、`CommandConfig(...)` 和下表顶层字段。用 `StreamingConfig.load(path)` 读取 UTF-8 JSON，返回可传给识别器的配置对象。构造配置对象时，下表的文件路径可直接传绝对路径。
-
-| JSON 字段 | 默认值及作用 |
+| 调用 | 什么时候用 |
 | --- | --- |
-| `models` | 可按资源配置 `source`、远端链接与版本或本地模型目录。写法见本页“指定模型来源”。 |
-| `asr.backend`、`asr.device` | 默认为 `native`、`auto`。原生执行支持 `cpu` 或 `cuda:N`。设置 `CUDA_VISIBLE_DEVICES` 时，`N` 为调用方可见列表中的编号。命令模型采用同一规则。可选 `vllm`、`vllm-builtin`（需要兼容 CUDA 环境），或协议测试用 `fake`。 |
-| `asr.profile` | 默认 `v15-canto-commit`，可选 `v17-yue-precision`。单 ASR 的历史配置还有 `v15`、`v15-realtime`、`v15-continuity`、`v15-temporal`、`v15-temporal-stream`、`v15-speech-aware`。 |
-| `asr.python`、`asr.expected_gpu_uuid`、`asr.warmup` | 可指定 worker 解释器与预期 GPU 身份，默认均为 `null`。默认打开预热。 |
-| `asr.model_dir`、`asr.alternate_model_dir`、`asr.language_model_dir`、`asr.speech_model_dir` | 分别覆盖 ASR 主模型、参考基座、语种模型和语音活动模型目录。默认按固定版本解析。 |
-| `asr.compatibility_lock_file` | 可选 POSIX 锁路径。用于和已有部署共用一把额外的 ASR 锁。 |
-| `command.enabled`、`command.model`、`command.device` | 默认 `true`、`clarification-new`、`auto`。可选模型见本页开头。 |
-| `command.candidates`、`command.candidates_file` | 可选内嵌 I/T/P 或候选 JSON 路径，默认均为 `null`。 |
-| `command.candidate_profiles_dir` | 可选候选配置目录。省略时使用包的用户配置目录。 |
-| `command.recognition_logic` | 默认 `original`。流式会话可选 `semantic-pair`，比较当前片段和相邻未执行片段拼接后的语义。 |
-| `command.python`、`command.base_model_dir`、`command.checkpoint` | 覆盖命令 worker 解释器、语言模型基座、与所选模型兼容的 checkpoint 目录。默认均为 `null`。 |
-| `command.use_cuda_graphs`、`command.expected_gpu_uuid` | CUDA 图默认打开；可选预期 GPU 身份。 |
-| `interval_ms`、`endpoint_ms`、`max_segment_ms` | 默认 800、240、16000 毫秒，分别设置流式更新间隔、定稿静音阈值和单段最长时长。 |
-| `event_queue_size`、`max_pending_audio_ms` | 默认 256 个事件、30000 毫秒音频，限制事件与音频积压。 |
-| `cache_dir`、`logs_dir`、`offline` | 默认使用系统用户缓存和日志目录。默认 `offline=false`；设为 `true` 时，缺失的缓存资源会报错。 |
+| `async with session` 或 `await session.start()` | 开始处理本次输入。推荐用上下文管理器自动关闭。 |
+| `await session.feed(pcm)` | 送入一个 PCM 块。字节数必须为偶数，缓冲超限时抛出 `BufferError`。 |
+| `async for event in session.events()` | 读取本次事件，支持一个消费者。 |
+| `await session.finish()` | 输入结束后调用。保持消费事件，直到末尾定稿处理完、收到 `session.completed`。 |
+| `await session.close()` | 结束会话并释放识别器，也可用于提前中断。 |
+| `await session.fail(exc)` | 把音频源异常传给事件消费者，再关闭会话。 |
+| `session.configure_candidates(candidates)` | 更新本次候选，返回候选和版本。更新后，之前的待答澄清失效。 |
+| `await session.feedback(text, clarification_id)` | 使用先前事件的澄清 ID 提交回答。结果从 `command.feedback` 读取。 |
+| `await session.clear_memory()` | 清除待答澄清与模型临时状态，后续处理仍可使用 H1。 |
 
-## 音频源与候选配置文件管理
+## 管理识别器
 
-| Python 调用 | 用途与返回值 |
+| 调用 | 用途 |
 | --- | --- |
-| `audio_file(path, *, realtime=True, block_ms=20)` | 异步迭代解码后的单声道 16 kHz PCM16 字节块，自动下混和连续重采样。 |
-| `microphone(device=None, *, sample_rate=None, block_ms=20, queue_seconds=5)` | 异步迭代录音字节。默认采用输入设备采样率并转换成 16 kHz；溢出时抛出 `streamingcommand.audio.AudioOverflowError`。 |
-| `CandidateProfiles(directory=..., registry=None)` | 打开具名候选配置目录和模型默认映射表，省略参数使用用户配置目录。 |
-| `CandidateProfiles.filename(name)` | 校验名称并返回带 `.json` 的文件名。 |
-| `profiles.list()` | 返回有效文件、校验错误和默认映射，键为 `configs`、`errors`、`defaults`。 |
-| `profiles.read(name)` | 返回包含 `name` 和 `candidates` 的字典。 |
-| `profiles.save(name, candidates, *, create=False)` | 更新已有文件，用 `create=True` 新建。另存为可将 `read()` 得到的候选传给新名字。返回保存的记录。 |
-| `profiles.rename(name, new_name)` | 重命名并同步模型默认映射，返回新记录。 |
-| `profiles.default_path(model, fallback)` | 返回该模型默认候选的 `Path`，缺少映射时使用传入的备用路径。 |
+| `StreamingCommand(config=None, *, config_path=None, asr_backend=None, command_backend=None)` | 创建识别器。可以传配置对象、位置参数 JSON 路径，或 `config_path`。注入自定义 ASR 后端时，也由应用提供需要的命令后端。 |
+| `StreamingASR(config=None, **kwargs)` | 只加载转写所需模型，音频接口相同。 |
+| `async with StreamingCommand(...) as recognizer` | 进入时启动，退出时关闭。`StreamingASR` 也支持。 |
+| `await StreamingCommand.initialize(config_path=None, *, config=None)` | 创建、启动并返回识别器，由调用方关闭。`StreamingASR.initialize(...)` 同样可用。 |
+| `await recognizer.start()` | 启动已有实例，返回实例自身，可重复调用。 |
+| `recognizer.info()` | 查看就绪状态、实际模型和候选。ASR 的 `model_sources` 记录资源路径，命令后端的 `model_id`、`checkpoint_source`、`checkpoint_step` 和 `default_candidates` 记录权重和候选。 |
+| `await recognizer.switch_model(model)` | 在空闲时切换命令模型并返回新状态，继续复用 ASR。 |
+| `await recognizer.close()` | 关闭活动音频和已加载的后端，可重复调用。关闭后可创建新的识别器。 |
 
-## 资源、集成和 CLI
+直接管理后端的应用可以使用 `await streamingcommand.backends.build_backends(config)` 获取待启动的 `(asr, command)`。禁用命令时，第二项为 `None`。
 
-安装 `streamingcommand[speech]` 后，可用 `streamingcommand.speech.ClarificationSpeech(logs_root=None, *, offline=False)` 朗读澄清提示。用 `await speech.speak(text)` 返回 WAV 字节，可用 `await speech.start()` 预热，用 `await speech.close()` 释放 CPU worker。
+## 配置字段
 
-| 调用 | 用途与返回值 |
+`StreamingConfig.load(path)` 把 UTF-8 JSON 读成配置对象。也可以用 `StreamingConfig(asr=ASRConfig(...), command=CommandConfig(...), ...)` 构造配置。JSON 内的相对路径从该文件所在目录解析。
+
+| 字段 | 默认值及作用 |
 | --- | --- |
-| `streamingcommand.resources.ModelStore(cache_dir=None, *, offline=False)` | 创建固定版本的模型资源管理器。 |
-| `ModelStore.from_config(config)` | 按 `StreamingConfig` 创建资源管理器，与识别器启动时使用相同的路径、缓存和离线设置。 |
-| `store.source(name)` | 返回资源生效的来源字段，无需启动模型或下载文件。 |
-| `store.ensure(name, override=None)` | 解析资源并返回本地 `Path`。名称可用五个基础资源名和三个命令模型 ID。显式 `override` 使用调用方的本地目录。包清单内的远端资源还会校验文件哈希。 |
-| `streamingcommand.resources.sha256(path)` | 返回文件的十六进制 SHA-256。 |
-| `await streamingcommand.backends.build_backends(config)` | 按 `StreamingConfig` 解析资源，返回待启动的 `(asr, command)`；禁用命令时第二项为 `None`。普通调用使用管理生命周期的识别器。 |
-| `streamingcommand.cli.main(argv=None)` | Python 命令行入口，可传参数列表。入口脚本为 `streaming-command`。 |
+| `models` | 为每项资源选择远端仓库、本地目录或打包权重，见[模型来源](#指定模型来源)。 |
+| `asr.backend`、`asr.device` | 默认 `native`、`auto`。可选 `cpu` 或 `cuda:N`，其中 N 是当前进程看到的设备编号。也支持需要兼容 CUDA 环境的 `vllm`、`vllm-builtin` 和用于协议测试的 `fake`。 [Windows 与 vLLM](../docs/VLLM_WINDOWS.md) |
+| `asr.profile` | 默认 `v15-canto-commit`。可选 `v17-yue-precision` 和历史单引擎策略 `v15`、`v15-realtime`、`v15-continuity`、`v15-temporal`、`v15-temporal-stream`、`v15-speech-aware`。 |
+| `asr.python`、`asr.expected_gpu_uuid`、`asr.warmup` | 可指定 ASR worker 的解释器和预期 GPU，默认在启动时预热。 |
+| `asr.model_dir`、`asr.alternate_model_dir`、`asr.language_model_dir`、`asr.speech_model_dir` | 直接指定 ASR 主模型、参考基座、语种模型和 VAD 的本地目录。 |
+| `asr.compatibility_lock_file` | 与已有 POSIX 部署共用的额外 ASR 锁路径，可选。 |
+| `command.enabled`、`command.model`、`command.device` | 默认 `true`、`clarification-new`、`auto`。设备选择用与 ASR 相同的规则。 |
+| `command.candidates`、`command.candidates_file`、`command.candidate_profiles_dir` | 内嵌候选、候选文件、或候选配置目录，见[更换候选](#更换候选)。 |
+| `command.recognition_logic` | 默认 `original`。澄清模型可选 `semantic-pair`，比较本段与相邻未执行片段拼接后的命令。 |
+| `command.python`、`command.base_model_dir`、`command.checkpoint` | 可指定命令 worker 解释器、模型基座和 checkpoint 目录。 |
+| `command.use_cuda_graphs`、`command.expected_gpu_uuid` | CUDA 图默认启用，预期 GPU 身份可选。 |
+| `interval_ms`、`endpoint_ms`、`max_segment_ms` | 默认 800、240、16000 毫秒，分别是流式更新间隔、定稿静音阈值和单段最长时长。 |
+| `event_queue_size`、`max_pending_audio_ms` | 默认 256 个事件、30000 毫秒音频，对积压设置上限。 |
+| `cache_dir`、`logs_dir`、`offline` | 用于改变缓存位置、日志目录和离线模式，`offline` 默认为 `false`。 |
 
-```bash
-streaming-command --config settings.json doctor
-streaming-command --config settings.json download
-streaming-command --config settings.json run recording.wav
-streaming-command --config settings.json run --asr-only recording.wav
-streaming-command --config settings.json run
-```
+## 候选文件
 
-`doctor` 显示依赖、解释器、所选模型和各项配置来源，无需下载。`download` 解析当前配置启用的资源，也可以指定单项，例如 `download llm-base`。`run` 默认从麦克风收音，也可指定音频文件。`--config` 放在子命令前。
+用 `CandidateProfiles(directory=..., registry=None)` 管理多份具名 I/T/P 配置。省略目录时使用包的用户配置目录。
+
+| 调用 | 用途 |
+| --- | --- |
+| `CandidateProfiles.filename(name)` | 校验名称，返回带 `.json` 的文件名。 |
+| `profiles.list()` | 列出文件、校验错误和模型默认映射，键为 `configs`、`errors`、`defaults`。 |
+| `profiles.read(name)` | 返回 `name` 和 `candidates`。 |
+| `profiles.save(name, candidates, *, create=False)` | 保存候选。用 `create=True` 新建或另存为。 |
+| `profiles.rename(name, new_name)` | 重命名并更新模型默认映射。 |
+| `profiles.default_path(model, fallback)` | 返回模型的默认候选路径，缺少映射时使用备用路径。 |
+
+## 澄清朗读
+
+需要朗读模型的澄清提问时，额外安装 `python -m pip install -e ".[speech]"`。从 `streamingcommand.speech` 导入 `ClarificationSpeech`。
+
+| 调用 | 用途 |
+| --- | --- |
+| `ClarificationSpeech(logs_root=None, *, offline=False)` | 创建澄清朗读器。 |
+| `await speech.speak(text)` | 将文字合成为 WAV 字节。 |
+| `await speech.start()` | 提前启动 CPU worker。 |
+| `await speech.close()` | 释放朗读 worker。 |

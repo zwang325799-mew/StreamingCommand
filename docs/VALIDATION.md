@@ -1,5 +1,17 @@
 # 验证范围
 
+## 2026-11-20 · 麦克风与粤语录音样板
+
+- 从 2026-11-13 的 Demo 麦克风录音截取 31.660–34.320 秒，得到 [2.66 秒粤语 WAV](../example/cantonese.wav)，PCM 与原录音对应区间一致。
+- 在 Linux CPU 上执行 `python example/recognize.py`，使用 [示例配置](../example/settings.json) 和已有的 Hugging Face 缓存。V17 ASR 定稿为「向上望少少。」，step 1392 Clarification 返回 `EXECUTE`，参数为 `I=bend`、`T=none`、`P=up`。
+- 执行 `python example/live_recognize.py` 时，通过模拟麦克风按实际采集节奏输入同一片段。SDK 请求默认输入，真模型输出转写预览、上述定稿和命令。发送 Ctrl+C 后，音频流停止并关闭，进程正常退出。物理麦克风待实机验证。 [麦克风样板](../example/live_recognize.py)
+
+## 2026-11-20 · 共享 Hub 缓存和独立接入
+
+- 从 wheel 安装到临时环境，在仓库之外复制发布预设，匿名下载 Silero VAD 和 step1392 Clarification。两项都解析到 Hugging Face 的固定版本快照。切换离线后复用同一位置，未生成额外的 StreamingCommand 权重副本。
+- ASR、语种模型和两套基座使用既有文件，放到测试用 Hub 快照目录后按清单核对 SHA-256。从本地仓库可编辑安装后，在仓库外调用 Python 接入样板。离线 CPU 对英语 WAV 输出定稿 `Bend left.` 和动作 `bend / none / left`。
+- StreamingCommand 和相关 Demo CPU 回归共 97 项通过。wheel 同时提供 API、验证、Windows/vLLM 和 Demo 接入文档。安装验证复用了宿主依赖，平台为 Linux。
+
 ## 2026-11-18 · Demo 通过公开 SDK 部署
 
 - 将 wheel 安装到临时目录，使用 `PHONO_STREAMINGCOMMAND_INSTALLED=1` 启动实际 `run.sh`。在 Linux CPU 上，默认 native ASR 和 step3003 经 WebSocket 处理英语 WAV，输出定稿 `bend down` 和可执行的 `bend / none / down`。服务端成功归档 WAV、事件和参数。

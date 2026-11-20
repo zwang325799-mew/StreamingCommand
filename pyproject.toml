@@ -32,7 +32,7 @@ where = ["src"]
 streamingcommand = ["assets/**/*", "workers/**/*"]
 
 [tool.setuptools.data-files]
-"share/doc/streamingcommand" = ["doc/API.md"]
+"share/doc/streamingcommand" = ["doc/API.md", "docs/VLLM_WINDOWS.md", "docs/VALIDATION.md", "docs/DEMO_INTEGRATION.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

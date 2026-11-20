@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -6,7 +7,7 @@ from streamingcommand import CommandConfig, StreamingConfig
 from streamingcommand._runtime.paths import ASSETS
 from streamingcommand.cli import main
 from streamingcommand.config import ASR_RESOURCES, HYBRID_MODEL, PUBLISHED_MODEL
-from streamingcommand.resources import ModelStore
+from streamingcommand.resources import ModelStore, sha256
 
 
 def test_presets_declare_all_active_models():
@@ -29,6 +30,9 @@ def test_presets_declare_all_active_models():
     for name, source in release.models.items():
         assert source == ModelStore().source(name)
         assert source["source"] == "huggingface"
+    template = StreamingConfig.load(ASSETS / "settings.json")
+    for name in ASR_RESOURCES:
+        assert template.models[name] == ModelStore().source(name)
 
 
 @pytest.mark.parametrize("entry", [
@@ -89,11 +93,15 @@ def test_explicit_source_takes_precedence_over_worker_model_path(tmp_path, monke
     assert ModelStore.from_config(StreamingConfig(models={name: source})).source(name) == source
 
 
-def test_custom_snapshot_uses_configured_revision_and_subfolder(tmp_path, monkeypatch):
+@pytest.mark.parametrize("isolated", [False, True])
+def test_custom_snapshot_uses_configured_revision_and_subfolder(tmp_path, monkeypatch, isolated):
     """Check the repo, pinned revision, offline mode, and subfolder supplied to custom snapshot downloads."""
     import huggingface_hub
+    from huggingface_hub import constants
 
     calls = []
+    monkeypatch.delenv("STREAMINGCOMMAND_CACHE", raising=False)
+    monkeypatch.setattr(constants, "HF_HUB_CACHE", str(tmp_path / "shared-hub"))
 
     def snapshot_download(**kwargs):
         """Record the Hugging Face request and return a temporary checkout for path resolution."""
@@ -104,13 +112,75 @@ def test_custom_snapshot_uses_configured_revision_and_subfolder(tmp_path, monkey
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
     for rev in ("a" * 40, "b" * 40):
-        store = ModelStore.from_config(StreamingConfig(cache_dir=str(tmp_path), offline=True, models={
+        store = ModelStore.from_config(StreamingConfig(cache_dir=str(tmp_path) if isolated else None, offline=True, models={
             "speech": {"source": "huggingface", "url": "https://huggingface.co/owner/repo",
                        "revision": rev, "subfolder": "vad"},
         }))
         assert store.ensure("speech") == tmp_path / rev / "vad"
         assert calls[-1] == dict(repo_id="owner/repo", revision=rev, local_files_only=True,
-                                 allow_patterns="vad/*", cache_dir=str(tmp_path / "hub"))
+                                 allow_patterns="vad/*", cache_dir=str(tmp_path / ("hub" if isolated else "shared-hub")))
+
+
+@pytest.fixture
+def model_cache(tmp_path, monkeypatch):
+    """Use a small nested model fixture in isolated shared and legacy cache roots."""
+    from huggingface_hub import constants
+    import streamingcommand.resources as resources
+
+    monkeypatch.delenv("STREAMINGCOMMAND_CACHE", raising=False)
+    monkeypatch.setattr(resources, "CACHE", tmp_path / "app")
+    monkeypatch.setattr(constants, "HF_HUB_CACHE", str(tmp_path / "hf"))
+    payload = tmp_path / "payload"
+    payload.write_bytes(b"checked model bytes")
+    store = ModelStore()
+    spec = store.manifest["speech"] = {
+        "repo_id": "owner/repo", "revision": "a" * 40, "prefix": "vad/",
+        "files": {"nested/model.onnx": {"size": payload.stat().st_size, "sha256": sha256(payload)}},
+    }
+    return store, spec, payload
+
+
+def test_pinned_download_reuses_shared_cache_in_place(model_cache, monkeypatch):
+    """Read the public snapshot in place and avoid a second SDK copy or offline download."""
+    import huggingface_hub
+
+    store, spec, payload = model_cache
+    calls = []
+
+    def download(repo_id, revision, filename, cache_dir):
+        """Materialize a file using the Hub's on-disk structure."""
+        calls.append((repo_id, revision, filename, cache_dir))
+        path = Path(cache_dir) / "models--owner--repo" / "snapshots" / revision / filename
+        path.parent.mkdir(parents=True)
+        path.write_bytes(payload.read_bytes())
+        return str(path)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
+    first = store.ensure("speech")
+    assert first == store.hub_cache_dir / "models--owner--repo" / "snapshots" / spec["revision"] / "vad"
+    assert calls == [(spec["repo_id"], spec["revision"], "vad/nested/model.onnx", str(store.hub_cache_dir))]
+    assert not store.root.exists()
+    store.offline = True
+    assert store.ensure("speech") == first
+    assert len(calls) == 1
+    (first / "nested/model.onnx").write_bytes(b"corrupt archive")
+    with pytest.raises(FileNotFoundError, match="Offline model is missing or corrupt: speech"):
+        store.ensure("speech")
+
+
+@pytest.mark.parametrize("legacy_layout", ["hub", "models"])
+def test_offline_reads_previous_streamingcommand_cache(model_cache, legacy_layout):
+    """Check both old private-cache formats remain usable without fetching any files."""
+    store, spec, payload = model_cache
+    store.offline = True
+    if legacy_layout == "hub":
+        path = store.root.parent / "hub/models--owner--repo/snapshots" / spec["revision"] / "vad"
+    else:
+        path = store.root / "speech"
+    (path / "nested").mkdir(parents=True)
+    (path / "nested/model.onnx").write_bytes(payload.read_bytes())
+    assert store.ensure("speech") == path
+    assert not store.hub_cache_dir.exists()
 
 
 def test_release_cli_shows_model_without_loading_and_downloads_active_resources(tmp_path, monkeypatch, capsys):

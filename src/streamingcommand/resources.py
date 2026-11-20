@@ -2,10 +2,7 @@
 import hashlib
 import json
 import os
-from pathlib import Path
-import shutil
-import tempfile
-from filelock import FileLock
+from pathlib import Path, PurePosixPath
 from .config import BUNDLED_CHECKPOINTS, CHECKPOINTS, PUBLISHED_MODEL
 from ._runtime.paths import ASSETS, CACHE, model_path
 
@@ -19,13 +16,32 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def _matches(path, expected):
+    """Check the manifest's size and hash for one resolved model file."""
+    return path.is_file() and path.stat().st_size == expected["size"] and sha256(path) == expected["sha256"]
+
+
+def _snapshot_root(path, filename):
+    """Find the model directory containing a possibly nested manifest filename."""
+    return Path(path).parents[len(PurePosixPath(filename).parts) - 1]
+
+
 class ModelStore:
     def __init__(self, cache_dir=None, *, offline=False):
         """Read the bundled model manifest and record the cache root and offline policy."""
-        self.root = Path(cache_dir or CACHE) / "models"
+        root = Path(cache_dir or os.environ.get("STREAMINGCOMMAND_CACHE") or CACHE).expanduser().absolute()
+        self.root = root / "models"
+        self._hub_override = root / "hub" if cache_dir or os.environ.get("STREAMINGCOMMAND_CACHE") else None
         self.offline = offline
         self.manifest = json.loads((ASSETS / "models.json").read_text(encoding="utf-8"))
         self._sources = {}
+
+    @property
+    def hub_cache_dir(self):
+        """Return the effective Hugging Face cache, including any explicit package override."""
+        from huggingface_hub.constants import HF_HUB_CACHE
+
+        return self._hub_override or Path(HF_HUB_CACHE).expanduser().absolute()
 
     @classmethod
     def from_config(cls, config):
@@ -89,7 +105,7 @@ class ModelStore:
         return path
 
     def _resolve(self, name, entry):
-        """Resolve directories, bundled files, or pinned downloads with atomic cache replacement."""
+        """Resolve local or packaged files, or return a pinned Hugging Face model directory."""
         if entry["source"] == "local":
             path = Path(entry["path"]).expanduser().absolute()
             if not path.is_dir():
@@ -105,37 +121,59 @@ class ModelStore:
         default = self._default_source(name)
         if (entry["url"], entry["revision"], entry.get("subfolder", "")) != (
                 default.get("url"), default.get("revision"), default.get("subfolder", "")):
-            from huggingface_hub import snapshot_download
-            folder = entry.get("subfolder", "")
-            snapshot = snapshot_download(
-                repo_id=entry["url"].removeprefix("https://huggingface.co/"),
-                revision=entry["revision"], cache_dir=str(self.root.parent / "hub"),
-                allow_patterns=f"{folder}/*" if folder else None, local_files_only=self.offline)
-            path = Path(snapshot) / folder
-            if not path.is_dir():
-                raise FileNotFoundError(f"Missing {name} directory in pinned snapshot: {path}")
-            return path
+            return self._custom_snapshot(name, entry)
+        return self._verified_snapshot(name)
+
+    def _cached_hubs(self):
+        """Prefer the configured cache and look for snapshots left by older installations."""
+        preferred = self.hub_cache_dir
+        legacy = self.root.parent / "hub"
+        return (preferred, legacy) if legacy != preferred and legacy.is_dir() else (preferred,)
+
+    def _custom_snapshot(self, name, entry):
+        """Resolve a user-supplied pinned revision with the Hugging Face snapshot API."""
+        from huggingface_hub import snapshot_download
+        from huggingface_hub.errors import LocalEntryNotFoundError
+
+        folder = entry.get("subfolder", "")
+        options = dict(repo_id=entry["url"].removeprefix("https://huggingface.co/"),
+                       revision=entry["revision"], allow_patterns=f"{folder}/*" if folder else None,
+                       local_files_only=self.offline)
+        caches = self._cached_hubs() if self.offline else (self.hub_cache_dir,)
+        for cache in caches:
+            try:
+                path = Path(snapshot_download(**options, cache_dir=str(cache))) / folder
+            except LocalEntryNotFoundError:
+                if cache == caches[-1]:
+                    raise
+                continue
+            if path.is_dir():
+                return path
+        raise FileNotFoundError(f"Missing {name} subfolder in pinned snapshot: {folder}")
+
+    def _verified_snapshot(self, name):
+        """Verify pinned model files in place and reuse older complete caches when available."""
+        from huggingface_hub import hf_hub_download, try_to_load_from_cache
+
         spec = self.manifest[name]
-        path = self.root / name
-        path.mkdir(parents=True, exist_ok=True)
-        with FileLock(str(path / ".download.lock")):
-            for filename, expected in spec["files"].items():
-                destination = path / filename
-                if destination.is_file() and destination.stat().st_size == expected["size"] and sha256(destination) == expected["sha256"]:
-                    continue
-                if self.offline:
-                    raise FileNotFoundError(f"Offline model is missing or corrupt: {name}/{filename}")
-                from huggingface_hub import hf_hub_download
-                source = hf_hub_download(repo_id=spec["repo_id"], revision=spec["revision"], filename=spec.get("prefix", "") + filename, cache_dir=str(self.root.parent / "hub"))
-                if sha256(source) != expected["sha256"]:
-                    raise ValueError(f"Downloaded model checksum mismatch: {name}/{filename}")
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                fd, temporary = tempfile.mkstemp(dir=destination.parent)
-                os.close(fd)
-                try:
-                    shutil.copyfile(source, temporary)
-                    os.replace(temporary, destination)
-                finally:
-                    if Path(temporary).exists():
-                        Path(temporary).unlink()
-        return path
+        prefix = spec.get("prefix", "")
+        files = spec["files"]
+        first = next(iter(files))
+        identity = dict(repo_id=spec["repo_id"], revision=spec["revision"])
+        for cache in self._cached_hubs():
+            source = try_to_load_from_cache(**identity, filename=prefix + first, cache_dir=str(cache))
+            if isinstance(source, str):
+                path = _snapshot_root(source, first)
+                if all(_matches(path / filename, expected) for filename, expected in files.items()):
+                    return path
+        legacy = self.root / name
+        if all(_matches(legacy / filename, expected) for filename, expected in files.items()):
+            return legacy
+        if self.offline:
+            raise FileNotFoundError(f"Offline model is missing or corrupt: {name} in {self.hub_cache_dir}")
+        for filename, expected in files.items():
+            source = Path(hf_hub_download(**identity, filename=prefix + filename,
+                                         cache_dir=str(self.hub_cache_dir)))
+            if not _matches(source, expected):
+                raise ValueError(f"Downloaded model checksum mismatch: {name}/{filename}")
+        return _snapshot_root(source, filename)

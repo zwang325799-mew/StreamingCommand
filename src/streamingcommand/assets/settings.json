@@ -18,7 +18,7 @@
     "asr": {
       "source": "huggingface",
       "url": "https://huggingface.co/humoiww/PhonoCommand-ASR",
-      "revision": "f75155d95ef1b53e14a884868aa6a46841a4d4ed"
+      "revision": "ff8daaafd4a7fd4b396c2ffcab8da230d3c17a4f"
     },
     "asr-base": {
       "source": "huggingface",
@@ -33,7 +33,7 @@
     "speech": {
       "source": "huggingface",
       "url": "https://huggingface.co/humoiww/PhonoCommand-ASR",
-      "revision": "f75155d95ef1b53e14a884868aa6a46841a4d4ed",
+      "revision": "ff8daaafd4a7fd4b396c2ffcab8da230d3c17a4f",
       "subfolder": "silero_vad"
     },
     "llm-base": {
