@@ -5,13 +5,51 @@
     "profile": "v17-yue-precision"
   },
   "command": {
-    "model": "clarification-latest",
+    "model": "clarification-hybrid",
     "device": "auto",
     "recognition_logic": "semantic-pair",
     "candidates": {
-      "I": ["track", "bend", "self rotate", "stop", "bird view", "reset", "move", "clean lens"],
-      "T": ["liver", "pancreas", "stomach", "organ", "all", "ligasure", "straight grasper", "duodenal stump", "grasper", "gallbladder", "curved grasper", "instrument", "knife", "none", "scissor", "harmonic scalpel"],
-      "P": ["forward", "left", "up", "backward", "right", "none", "down"]
+      "I": [
+        "track",
+        "bend",
+        "self rotate",
+        "stop",
+        "bird view",
+        "reset",
+        "move",
+        "clean lens",
+        "zoom in",
+        "zoom out",
+        "spray water",
+        "spray air"
+      ],
+      "T": [
+        "liver",
+        "pancreas",
+        "stomach",
+        "organ",
+        "all",
+        "ligasure",
+        "straight grasper",
+        "duodenal stump",
+        "grasper",
+        "gallbladder",
+        "curved grasper",
+        "instrument",
+        "knife",
+        "none",
+        "scissor",
+        "harmonic scalpel"
+      ],
+      "P": [
+        "forward",
+        "left",
+        "up",
+        "backward",
+        "right",
+        "none",
+        "down"
+      ]
     }
   },
   "models": {
@@ -35,10 +73,10 @@
       "source": "local",
       "path": "/home/zihan/.cache/huggingface/hub/models--Qwen--Qwen3.5-0.8B/snapshots/2fc06364715b967f1860aea9cf38778875588b17"
     },
-    "clarification-latest": {
+    "clarification-hybrid": {
       "source": "local",
-      "expected_step": 936,
-      "path": "/home/zihan/data/code/PhonoCommandDialogue/notebooks/outputs/single_model_clarification/20261114_llm_errors_stratified20_gpu0/best"
+      "expected_step": 1392,
+      "path": "/home/zihan/data/code/PhonoCommandDialogue/notebooks/outputs/single_model_clarification/20261119_hybrid_voice_stratified20_gpu0/best"
     }
   },
   "offline": true

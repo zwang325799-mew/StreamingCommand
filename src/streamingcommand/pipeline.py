@@ -3,7 +3,7 @@ import asyncio
 from contextlib import suppress
 import copy
 from pathlib import Path
-from .config import StreamingConfig
+from .config import CLARIFICATION_MODELS, StreamingConfig
 
 
 class StreamingCommand:
@@ -103,8 +103,7 @@ class StreamingCommand:
             raise RuntimeError("Close the active audio session before switching models")
         async with self._lock:
             if self.config.command.recognition_logic == "semantic-pair":
-                from .config import BUNDLED_CHECKPOINTS
-                if model not in BUNDLED_CHECKPOINTS:
+                if model not in CLARIFICATION_MODELS:
                     raise ValueError("Semantic-pair recognition requires a clarification model")
             if model in self.commands.specs and model != self.commands.status["model_id"]:
                 from .resources import ModelStore

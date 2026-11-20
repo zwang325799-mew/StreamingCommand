@@ -69,9 +69,11 @@ class CommandConfig:
 
 
 PUBLISHED_MODEL = "phonocommand-llm-0.8b"
+HYBRID_MODEL = "clarification-hybrid"
 ASR_RESOURCES = ("asr", "asr-base", "language", "speech")
 BUNDLED_CHECKPOINTS = ("clarification-new", "clarification-latest")
-CHECKPOINTS = (*BUNDLED_CHECKPOINTS, PUBLISHED_MODEL)
+CLARIFICATION_MODELS = (*BUNDLED_CHECKPOINTS, HYBRID_MODEL)
+CHECKPOINTS = (*CLARIFICATION_MODELS, PUBLISHED_MODEL)
 
 
 def _validate_sources(models):
@@ -82,15 +84,15 @@ def _validate_sources(models):
     for name, entry in models.items():
         if not isinstance(entry, dict):
             raise ValueError(f"models.{name} must be a source object")
+        if "expected_step" in entry:
+            step = entry["expected_step"]
+            if name not in CHECKPOINTS or type(step) is not int or step < 0:
+                raise ValueError(f"models.{name}: expected_step requires a nonnegative checkpoint step")
         kind = entry.get("source")
         if kind in ("local", "package"):
             path = entry.get("path")
             if not isinstance(path, str) or not path.strip():
                 raise ValueError(f"models.{name}: {kind} requires an explicit path")
-            if "expected_step" in entry:
-                step = entry["expected_step"]
-                if name not in CHECKPOINTS or type(step) is not int or step < 0:
-                    raise ValueError(f"models.{name}: expected_step requires a nonnegative checkpoint step")
             if set(entry) - {"source", "path", "expected_step"}:
                 raise ValueError(f"models.{name}: unexpected {kind} source fields")
             if kind == "package" and (name not in BUNDLED_CHECKPOINTS or path != f"assets/models/{name}"):
@@ -106,7 +108,7 @@ def _validate_sources(models):
                     PureWindowsPath(folder).drive or any(p in ("", ".", "..") for p in folder.split("/"))
                     or any(c in folder for c in "\\*?[]"))):
                 raise ValueError(f"models.{name}: invalid repository subfolder")
-            if set(entry) - {"source", "url", "revision", "subfolder"}:
+            if set(entry) - {"source", "url", "revision", "subfolder", "expected_step"}:
                 raise ValueError(f"models.{name}: unexpected Hugging Face source fields")
         else:
             raise ValueError(f"models.{name}: choose local, huggingface or package")

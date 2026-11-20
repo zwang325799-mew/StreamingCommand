@@ -8,10 +8,10 @@
 
 | 完整范例 | ASR | 命令模型 |
 | --- | --- | --- |
-| [local-latest.json](../src/streamingcommand/assets/presets/local-latest.json) | 本地 `v17-yue-precision`，JSON 列出主模型、参考基座、语种判别和 VAD 各自的实际目录。 | 本地 Qwen 基座 + `clarification-latest` 的 epoch 1 / step936，启用 `semantic-pair`，支持澄清。本机可离线使用，迁移到其他机器时按实际位置改六个 `path`。 |
-| [huggingface-release.json](../src/streamingcommand/assets/presets/huggingface-release.json) | 发布清单中的 `humoiww/PhonoCommand-ASR@f75155d9`，使用 `v15-speech-aware`。 | `Qwen/Qwen3.5-0.8B@2fc06364` + `humoiww/PhonoCommand-LLM-0.8B@f5824a4b`，单次前向判断是否为命令并预测 I/T/P。导出记录为 step0，继承训练 step4400。此模型使用 `original`，无澄清头。 |
+| [local-latest.json](../src/streamingcommand/assets/presets/local-latest.json) | 本地 `v17-yue-precision`，JSON 列出主模型、参考基座、语种判别和 VAD 的实际目录。 | 本地 Qwen 基座 + `clarification-hybrid`（epoch 2 / step1392），启用 `semantic-pair`。迁移到其他机器时按实际位置改六个 `path`。 |
+| [huggingface-release.json](../src/streamingcommand/assets/presets/huggingface-release.json) | `humoiww/PhonoCommand-ASR@ff8daaaf`，使用 `v17-yue-precision`。 | `Qwen/Qwen3.5-0.8B@2fc06364` + `humoiww/PhonoCommand-LLM-0.8B@d5217d0c` 子目录 `clarification-hybrid`（epoch 2 / step1392）。预设 I/T/P 采用 `endoscope-hybrid`。 |
 
-表中提交号为缩写。JSON 给出了每项的完整 URL 和 40 位提交号。两个主模型的配对依据见 [Hugging Face 发布清单](https://huggingface.co/humoiww/PhonoCommand-ASR/blob/main/release_set.json)。
+表中提交号为缩写。JSON 给出完整 URL 和 40 位提交号。V17 使用同一套经哈希核验的 ASR 权重，粤语策略由库在推理时应用。 [Hugging Face 发布记录](https://huggingface.co/humoiww/PhonoCommand-ASR/blob/ff8daaafd4a7fd4b396c2ffcab8da230d3c17a4f/releases/20261120-hybrid/ASR_PROFILE.json)
 
 ### 指定模型来源
 
@@ -19,11 +19,11 @@
 
 | `source` | 必填字段与示例 |
 | --- | --- |
-| `huggingface` | `"url": "https://huggingface.co/humoiww/PhonoCommand-LLM-0.8B"`、`"revision": "f5824a4b36af0ff66dfa2d916fcf0b6166fe22fc"`。位于仓库子目录的资源另填 `subfolder`，例如该 ASR 仓库的 `silero_vad`。 |
+| `huggingface` | `"url": "https://huggingface.co/humoiww/PhonoCommand-LLM-0.8B"`、`"revision": "d5217d0c486933822da027600d7ceb9ed2d9bfb7"`、`"subfolder": "clarification-hybrid"`。命令模型还可填 `"expected_step": 1392`。 |
 | `local` | `"path": "./models/my-checkpoint"`。填写实际模型目录。相对路径以配置文件所在目录为起点。命令模型还可写 `"expected_step": 936`，启动时检查 `experiment.json` 的步数，用错目录会报错。 |
 | `package` | `path` 为 `assets/models/clarification-new` 或 `assets/models/clarification-latest`，对应随包分发的两个澄清模型。 |
 
-更换仓库或版本时应保持对应模型的权重结构。发布版命令模型从目录根部读取 PEFT 适配器、`head.safetensors` 和 `experiment.json`。两个澄清模型从 `adapter/` 读取 PEFT 权重，根部还需要 `head.safetensors`、`clarify_head.pt` 和 `experiment.json`。同一资源的 `models` 条目和旧式本地路径字段只能填写一处。
+更换仓库或版本时保持对应模型的权重结构。旧候选排序器 `phonocommand-llm-0.8b` 在目录根部读取 PEFT 适配器、`head.safetensors` 和 `experiment.json`。澄清模型从 `adapter/` 读取 PEFT 权重，根部还需 `head.safetensors`、`clarify_head.pt` 和 `experiment.json`。同一资源的 `models` 条目和旧式本地路径字段只能填写一处。
 
 ### 更换候选
 
@@ -56,7 +56,7 @@ async def main():
 asyncio.run(main())
 ```
 
-- `command.model` 可选 `clarification-new`（step3003，默认）、`clarification-latest`（本地最新测试，step936）或 `phonocommand-llm-0.8b`（Hugging Face 发布的候选排序模型）。前两者支持澄清、空 P 的器械护士配置和 `semantic-pair`。保存后关闭旧实例，再用该路径创建新实例。
+- `command.model` 可选 `clarification-new`（step3003，默认）、`clarification-latest`（step936）、`clarification-hybrid`（step1392）或 `phonocommand-llm-0.8b`（旧候选排序器）。三个澄清模型支持 H1、空 P 的器械护士配置和 `semantic-pair`。内窥镜新命令表使用 `clarification-hybrid` 和 `endoscope-hybrid.json`，新增 `zoom in`、`zoom out`、`spray water`、`spray air`。
 - `command.candidates` 直接保存三组有序字符串。I 是意图，T 是目标，P 是方向或位置。每组内部的值须非空且唯一，I 和 T 至少各有一项。P 有值时，T 和 P 都须包含业务值 `"none"`。P 为空时，I 只支持 `give`、`stop`、`reset` 的非空子集。自转用 `self rotate`。模型从提供的候选中预测，新增名称的识别效果需要用自己的输入验证。
 - 也可以用 `"candidates_file": "profiles/scrub.json"` 引用单独一个只含 I、T、P 的 JSON。它与内嵌 `candidates` 二选一。两者都省略时，使用所选模型的默认候选文件。显式传给 `parse` 或 `session` 的候选只覆盖本次调用或会话。
 - JSON 中省略的字段使用配置类默认值。配置里的相对文件路径以该 JSON 所在目录为基准；构造器接受的配置文件路径本身相对于当前工作目录。

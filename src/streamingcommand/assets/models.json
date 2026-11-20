@@ -111,7 +111,7 @@
   },
   "asr": {
     "repo_id": "humoiww/PhonoCommand-ASR",
-    "revision": "f75155d95ef1b53e14a884868aa6a46841a4d4ed",
+    "revision": "ff8daaafd4a7fd4b396c2ffcab8da230d3c17a4f",
     "files": {
       "chat_template.json": {
         "sha256": "75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff",
@@ -161,7 +161,7 @@
   },
   "speech": {
     "repo_id": "humoiww/PhonoCommand-ASR",
-    "revision": "f75155d95ef1b53e14a884868aa6a46841a4d4ed",
+    "revision": "ff8daaafd4a7fd4b396c2ffcab8da230d3c17a4f",
     "prefix": "silero_vad/",
     "files": {
       "LICENSE": {
@@ -199,5 +199,53 @@
         "size": 2894
       }
     }
+  },
+  "clarification-hybrid": {
+    "repo_id": "humoiww/PhonoCommand-LLM-0.8B",
+    "revision": "d5217d0c486933822da027600d7ceb9ed2d9bfb7",
+    "prefix": "clarification-hybrid/",
+    "files": {
+      "COMPLETE.json": {
+        "sha256": "709d2e9f7bfbeeca4787cd18a6cb11f0f66d3717f9beac924fe549a19fe0c94a",
+        "size": 457
+      },
+      "MANIFEST.json": {
+        "sha256": "7a11ed7b48ca07cbac92527ecdd6481143c0f7389d13d8d777744703e07ebeca",
+        "size": 1313
+      },
+      "README.md": {
+        "sha256": "c5d6ab6f93a7c6f4a3deb6e7f8dd7eb59ac4578d465c3001b1441e3e2343d497",
+        "size": 617
+      },
+      "adapter/adapter_config.json": {
+        "sha256": "de532cccfd674b5a205eb2f2519c71afbfffe54fcdc748dcf2a25dce17bbaebc",
+        "size": 1335
+      },
+      "adapter/adapter_model.safetensors": {
+        "sha256": "efbea478563b178e326d7a7a60ee5aaeeb108927a6dbb71ff96508e7f6e5ef01",
+        "size": 22088304
+      },
+      "clarify_head.pt": {
+        "sha256": "51a4a3355b2ae8a6605ab8e3290f0defabd76428a6f328de4b1a0333078aab36",
+        "size": 18895
+      },
+      "endoscope-hybrid.json": {
+        "sha256": "4dcda8181c39120b7ecf3dfdba94b65d69d75a4fa62700097dc781fa71707818",
+        "size": 583
+      },
+      "experiment.json": {
+        "sha256": "709d2e9f7bfbeeca4787cd18a6cb11f0f66d3717f9beac924fe549a19fe0c94a",
+        "size": 457
+      },
+      "head.safetensors": {
+        "sha256": "98dc089369cf30f8bc2a90360622d483b4bf2f59bd511a6ccbb5da95a699598a",
+        "size": 1640404
+      },
+      "integrity.json": {
+        "sha256": "a2aef06fd93ed589ede0fe929589baf34687c1baf42461839d6ebfe5f4c74982",
+        "size": 597
+      }
+    },
+    "expected_step": 1392
   }
 }

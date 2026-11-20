@@ -8,7 +8,7 @@ else:
     from device_policy import DEFAULT_GPU_UUID
 
 from .paths import model_path
-from ..config import PUBLISHED_MODEL
+from ..config import CLARIFICATION_MODELS, HYBRID_MODEL, PUBLISHED_MODEL
 ROOT = Path(__file__).resolve().parent.parent
 GPU_UUID = DEFAULT_GPU_UUID
 CURRENT_MODEL = "clarification-current"
@@ -22,9 +22,16 @@ SINGLE_MODEL = "clarification-single"
 SINGLE_CLARIFICATION_CHECKPOINT = model_path("clarification-single")
 NEW_CLARIFICATION_CHECKPOINT = model_path("clarification-new")
 LATEST_CLARIFICATION_CHECKPOINT = model_path("clarification-latest")
-H1_MODELS = frozenset((NEW_MODEL, LATEST_MODEL))
+H1_MODELS = frozenset(CLARIFICATION_MODELS)
 SINGLE_MODELS = frozenset((SINGLE_MODEL, *H1_MODELS))
 MODEL_SPECS = {
+    HYBRID_MODEL: {
+        "id": HYBRID_MODEL, "label": "Qwen 0.8B · 新命令表澄清（step1392）",
+        "checkpoint": str(model_path("clarification-hybrid")), "clarification": True,
+        "session_memory": False, "max_history_depth": 1,
+        "removed_intents": ["rotate"],
+        "description": "支持分开的画面缩放、镜体进退、喷水和喷雾，以及最近一条历史。",
+    },
     CURRENT_MODEL: {
         "id": CURRENT_MODEL, "label": "Qwen 0.8B · 语义澄清与会话记忆（11/06，实验）",
         "checkpoint": str(CURRENT_CLARIFICATION_CHECKPOINT), "clarification": True,
@@ -64,7 +71,7 @@ MODEL_SPECS = {
 }
 
 # Preserve the older choices; the back-only package remains callable by CLI.
-MODEL_SPECS = {key: MODEL_SPECS[key] for key in (NEW_MODEL, LATEST_MODEL)}
+MODEL_SPECS = {key: MODEL_SPECS[key] for key in CLARIFICATION_MODELS}
 
 
 def model_candidates(candidates, model):

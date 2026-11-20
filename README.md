@@ -73,8 +73,8 @@ async with StreamingCommand() as recognizer:
 
 | 配置单 | 加载的模型与识别方式 |
 | --- | --- |
-| [本地最新测试版](src/streamingcommand/assets/presets/local-latest.json) | 从六个本地目录加载，ASR 使用 `v17-yue-precision`，命令解析使用 epoch 1 / step936，支持 H1、澄清和相邻片段比较。路径对应测试机，换机器时修改各项 `path`。 |
-| [Hugging Face 发布版](src/streamingcommand/assets/presets/huggingface-release.json) | 六个资源逐项固定仓库 URL 和提交 SHA。ASR 使用 `humoiww/PhonoCommand-ASR`，命令解析使用 `humoiww/PhonoCommand-LLM-0.8B` 发布的 step4400 权重，预测命令与 I/T/P。 |
+| [本地最新测试版](src/streamingcommand/assets/presets/local-latest.json) | 从六个本地目录加载，ASR 使用 `v17-yue-precision`，命令解析使用 `clarification-hybrid`（epoch 2 / step1392），支持 H1、澄清和相邻片段比较。路径对应测试机，换机器时修改各项 `path`。 |
+| [Hugging Face 发布版](src/streamingcommand/assets/presets/huggingface-release.json) | 六个资源逐项固定仓库 URL 和提交 SHA。选择 `v17-yue-precision` 与 `clarification-hybrid`（epoch 2 / step1392）。新内窥镜候选包含画面放大、缩小、单独喷水和单独喷雾。 |
 
 安装后可复制任一范例再编辑。下面的命令将发布版保存为当前目录下的 `settings.json`，使用本地版时把文件名改为 `local-latest.json`。
 
@@ -111,7 +111,7 @@ config = StreamingConfig(
 ```
 
 也可以 `StreamingCommand("settings.json")`，JSON 字段对应上述配置类。路径相对于配置文件。
-默认保留 `v15-canto-commit` 与 `clarification-new`；`clarification-latest` 为完整 epoch1/step936。
+默认使用 `v15-canto-commit` 与 `clarification-new`。可选 `clarification-latest` 为 epoch 1 / step936，`clarification-hybrid` 为 epoch 2 / step1392，默认候选文件为 `endoscope-hybrid.json`。
 两套已训练 r16 适配器及决策头随包提供，基座按固定 revision 下载；没有生成式提示词替代这些分类头。
 澄清提议、自然回答、保留 N、business none/null、tracking 和 scrub-nurse 空 P 使用现有契约。
 候选文件位于用户配置目录，可通过 `CandidateProfiles` 新建、保存、重命名与另存为；示例见 `examples/`。

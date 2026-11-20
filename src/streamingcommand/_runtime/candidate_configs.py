@@ -9,7 +9,8 @@ import threading
 
 from .command_backend import validate_candidates
 
-from .paths import candidate_root
+from ..config import HYBRID_MODEL
+from .paths import ASSETS, candidate_root
 CONFIG_ROOT = candidate_root()
 PROFILE_ROOT = CONFIG_ROOT / "candidate_profiles"
 REGISTRY = CONFIG_ROOT / "candidate_profiles.json"
@@ -71,7 +72,14 @@ class CandidateConfigs:
     def default_path(self, model, fallback):
         """Choose the model's registered candidate profile or the supplied fallback."""
         name = self._defaults()["defaults"].get(model)
-        return self._path(name) if name else Path(fallback)
+        if name:
+            return self._path(name)
+        if model == HYBRID_MODEL:
+            profile = self._path("endoscope-hybrid.json")
+            if profile.is_file():
+                return profile
+            return ASSETS / "config/candidate_profiles/endoscope-hybrid.json"
+        return Path(fallback)
 
     def list(self):
         """List readable profiles with slot counts alongside unreadable-file errors."""

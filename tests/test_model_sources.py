@@ -5,7 +5,7 @@ import pytest
 from streamingcommand import CommandConfig, StreamingConfig
 from streamingcommand._runtime.paths import ASSETS
 from streamingcommand.cli import main
-from streamingcommand.config import ASR_RESOURCES, PUBLISHED_MODEL
+from streamingcommand.config import ASR_RESOURCES, HYBRID_MODEL, PUBLISHED_MODEL
 from streamingcommand.resources import ModelStore
 
 
@@ -13,15 +13,19 @@ def test_presets_declare_all_active_models():
     """Verify source declarations and model identities in both shipped deployment presets."""
     folder = ASSETS / "presets"
     local = StreamingConfig.load(folder / "local-latest.json")
-    assert local.command.model == "clarification-latest"
-    assert local.models[local.command.model]["expected_step"] == 936
+    assert local.command.model == HYBRID_MODEL
+    assert local.models[local.command.model]["expected_step"] == 1392
     assert local.command.recognition_logic == "semantic-pair" and local.offline
     assert set(local.models) == {*ASR_RESOURCES, "llm-base", local.command.model}
     assert all(s["source"] == "local" and s["path"] for s in local.models.values())
     release = StreamingConfig.load(folder / "huggingface-release.json")
-    assert release.command.model == PUBLISHED_MODEL
+    assert release.command.model == HYBRID_MODEL
     assert release.command.recognition_logic == "original"
-    assert set(release.models) == {*ASR_RESOURCES, "llm-base", PUBLISHED_MODEL}
+    assert release.asr.profile == local.asr.profile == "v17-yue-precision"
+    assert release.models[HYBRID_MODEL]["expected_step"] == 1392
+    assert release.command.candidates == local.command.candidates == json.loads(
+        (ASSETS / "config/candidate_profiles/endoscope-hybrid.json").read_text())
+    assert set(release.models) == {*ASR_RESOURCES, "llm-base", HYBRID_MODEL}
     for name, source in release.models.items():
         assert source == ModelStore().source(name)
         assert source["source"] == "huggingface"
@@ -125,7 +129,7 @@ def test_release_cli_shows_model_without_loading_and_downloads_active_resources(
     main(["--config", str(path), "doctor"])
     report = json.loads(capsys.readouterr().out)
     assert not calls
-    assert report["command_model"] == PUBLISHED_MODEL and report["asr_profile"] == "v15-speech-aware"
+    assert report["command_model"] == HYBRID_MODEL and report["asr_profile"] == "v17-yue-precision"
     main(["--config", str(path), "download"])
     assert dict(calls) == report["models"]
     with pytest.raises(ValueError, match="original"):

@@ -56,6 +56,8 @@ class ModelStore:
                      "revision": spec["revision"]}
             if spec.get("prefix"):
                 entry["subfolder"] = spec["prefix"].rstrip("/")
+            if "expected_step" in spec:
+                entry["expected_step"] = spec["expected_step"]
             return entry
         if name in BUNDLED_CHECKPOINTS:
             return {"source": "package", "path": f"assets/models/{name}"}

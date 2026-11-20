@@ -9,6 +9,7 @@ import copy
 import math
 
 from .command_stream import CommandSession
+from .command_models import H1_MODELS
 
 LOGIC_OPTIONS = [
     {"id": "original", "label": "原有识别逻辑"},
@@ -24,8 +25,8 @@ def validate_logic(value, backend=None):
     if value not in {o['id'] for o in LOGIC_OPTIONS}:
         raise ValueError('Unknown recognition_logic')
     if value == 'semantic-pair' and (backend is None or
-            backend.status.get('model_id') not in {'clarification-new', 'clarification-latest'}):
-        raise ValueError('前后段联合解析需要 clarification-new 或 clarification-latest 模型')
+            backend.status.get('model_id') not in H1_MODELS):
+        raise ValueError('前后段联合解析需要 H1 澄清模型')
     return value
 
 
